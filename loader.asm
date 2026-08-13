@@ -480,19 +480,38 @@ pci_find_vga:
     pop cx
     jne .pv_next
 
-    ; Found QEMU VGA! Read BAR0 from offset 0x10
+    ; Found QEMU VGA! Program BAR0 to 0x38000000 (within 0-1GB mapped region)
     push cx
+    
+    ; Build config address for BAR0
     xor eax, eax
     mov ax, cx
     shl eax, 11
     or eax, 0x80000010  ; enable bit + offset 0x10
     mov dx, 0xCF8
     o32 out dx, eax
-
+    
+    ; Write desired address to BAR0
+    mov eax, 0x38000000
+    mov dx, 0xCFC
+    o32 out dx, eax
+    
+    ; Read back to verify
+    mov dx, 0xCF8
+    o32 out dx, eax  ; Re-send config address (it gets reset)
+    ; Rebuild config address
+    pop cx
+    push cx
+    xor eax, eax
+    mov ax, cx
+    shl eax, 11
+    or eax, 0x80000010
+    mov dx, 0xCF8
+    o32 out dx, eax
     mov dx, 0xCFC
     o32 in eax, dx
     o32 and eax, 0xFFFFFFF0 ; mask off lower 4 bits (flags)
-
+    
     ; Store framebuffer address at [0x7008]
     xor bx, bx
     mov es, bx
@@ -565,8 +584,8 @@ align 4096
 pdt2:
 %assign i 0
 %rep 512
-       dq (0xC0000000 + i * 0x200000) | 0x83
+       dq (0xC0000000 + i * 0x200000) | 0x9B
 %assign i i + 1
 %endrep
-; All 512 PDEs filled — covers 3GB to 4GB
+; All 512 PDEs filled — covers 3GB to 4GB (with cache disable for MMIO)
 pt_end:
