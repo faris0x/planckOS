@@ -170,7 +170,7 @@ fn format_xy(width: usize, height: usize, bpp: u8, pitch: usize) -> &'static str
     i = putc(buf, i, b' ');
     i = putc(buf, i, b'@');
     i = putc(buf, i, b' ');
-    i = format_dec(buf, i, bpp as u64);
+    i = format_dec(buf, i, (bpp as u64) * 8);
     i = put_str(buf, i, "bpp, pitch ");
     i = format_dec(buf, i, pitch as u64);
     core::str::from_utf8(&buf[..i]).unwrap_or("?")
