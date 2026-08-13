@@ -49,6 +49,17 @@ pub fn serial_debug(msg: &[u8]) {
     }
 }
 
+pub fn serial_debug_hex(val: u64) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for i in (0..16).rev() {
+        let nibble = ((val >> (i * 4)) & 0xF) as usize;
+        unsafe {
+            while (inb(COM1 + 5) & 0x20) == 0 {}
+            outb(COM1, HEX[nibble]);
+        }
+    }
+}
+
 unsafe fn outb(port: u16, val: u8) {
     core::arch::asm!("out dx, al", in("dx") port, in("al") val, options(nomem, nostack));
 }

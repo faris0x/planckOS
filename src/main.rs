@@ -58,6 +58,9 @@ pub extern "C" fn _start() -> ! {
         let pitch = boot_info.pitch as usize;
         let bpp = boot_info.bpp;
         serial::serial_debug(b"  [+] Creating FramebufferDisplay\r\n\0");
+        serial::serial_debug(b"      fb_addr=");
+        serial::serial_debug_hex(fb_addr);
+        serial::serial_debug(b"\r\n\0");
         DisplayBackend::Framebuffer(FramebufferDisplay::new(fb_addr, width, height, pitch, bpp))
     } else {
         serial::serial_debug(b"  [+] VBE unavailable, using VGA text mode\r\n\0");

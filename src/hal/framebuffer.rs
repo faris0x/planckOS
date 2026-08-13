@@ -37,17 +37,22 @@ pub struct FramebufferDisplay {
 
 impl FramebufferDisplay {
     pub fn new(fb_addr: u64, width: usize, height: usize, pitch: usize, bpp: u8) -> Self {
+        crate::hal::serial::serial_debug(b"  [FB] new() entered\r\n\0");
         let fb_size = height * pitch;
         let fb_ptr = fb_addr as *mut u32;
+        crate::hal::serial::serial_debug(b"  [FB] Creating slice\r\n\0");
         let fb = unsafe { core::slice::from_raw_parts_mut(fb_ptr, fb_size / 4) };
+        crate::hal::serial::serial_debug(b"  [FB] Slice created\r\n\0");
 
         // Parse PSF2 header
+        crate::hal::serial::serial_debug(b"  [FB] Parsing PSF2\r\n\0");
         let header = unsafe { &*(FONT_DATA.as_ptr() as *const Psf2Header) };
         let g_w = if header.width != 0 { header.width as usize } else { 8 };
         let g_h = if header.height != 0 { header.height as usize } else { 16 };
         let g_size = header.glyph_size as usize;
         let n_glyphs = header.num_glyphs;
         let hdr_size = header.header_size as usize;
+        crate::hal::serial::serial_debug(b"  [FB] PSF2 parsed\r\n\0");
 
         // Glyph bitmap data starts after header
         let glyph_data = &FONT_DATA[hdr_size..hdr_size + g_size * n_glyphs as usize];
@@ -85,7 +90,9 @@ impl FramebufferDisplay {
             unicode_len,
         };
 
+        crate::hal::serial::serial_debug(b"  [FB] Clearing screen\r\n\0");
         display.clear();
+        crate::hal::serial::serial_debug(b"  [FB] new() complete\r\n\0");
         display
     }
 

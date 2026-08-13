@@ -4,8 +4,8 @@
 KERNEL_LBA equ 65
 ; Must match kernel_bin size after objcopy
 ; Update this when kernel size changes
-KERNEL_SIZE equ 49200
-KERNEL_SECTORS equ 105
+KERNEL_SIZE equ 185000
+KERNEL_SECTORS equ 362
 KERNEL_BUF equ 0x10000
 
 start:
@@ -491,7 +491,7 @@ pci_find_vga:
 
     mov dx, 0xCFC
     o32 in eax, dx
-    and eax, 0xFFFFFFF0 ; mask off lower 4 bits (flags)
+    o32 and eax, 0xFFFFFFF0 ; mask off lower 4 bits (flags)
 
     ; Store framebuffer address at [0x7008]
     xor bx, bx
@@ -539,7 +539,7 @@ gdt_ptr:
     dw gdt_end - gdt - 1
     dq gdt
 
-; Pre-built page tables (12KB)
+; Pre-built page tables (16KB)
 align 4096
 pt_template:
 pml4t: dq 0x0000000000003003
@@ -547,7 +547,9 @@ pml4t: dq 0x0000000000003003
 
 align 4096
 pdpt:  dq 0x0000000000004003
-       times 511 dq 0
+       times 2 dq 0
+       dq 0x0000000000005003
+       times 508 dq 0
 
 align 4096
 pdt:   dq 0x0000000000000083
@@ -558,4 +560,13 @@ pdt:   dq 0x0000000000000083
 %assign i i + 1
 %endrep
 ; All 512 PDEs filled — covers 0 to 1GB
+
+align 4096
+pdt2:
+%assign i 0
+%rep 512
+       dq (0xC0000000 + i * 0x200000) | 0x83
+%assign i i + 1
+%endrep
+; All 512 PDEs filled — covers 3GB to 4GB
 pt_end:
