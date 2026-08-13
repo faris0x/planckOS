@@ -28,13 +28,15 @@ run-sdl: all fs-img
     qemu-system-x86_64 \
       -drive format=raw,file=planckos.img \
       -drive format=raw,file=planckos_fs.img,index=2 \
-      -no-reboot -m 128M
+      -no-reboot -m 128M \
+      -device VGA,xres=1920,yres=1080
 
 run-serial: all fs-img
     qemu-system-x86_64 \
       -drive format=raw,file=planckos.img \
       -drive format=raw,file=planckos_fs.img,index=2 \
-      -no-reboot -m 128M -serial stdio
+      -no-reboot -m 128M -serial stdio \
+      -device VGA,xres=1920,yres=1080
 
 clean:
     rm -f boot_asm loader_asm kernel_bin planckos.img planckos_fs.img

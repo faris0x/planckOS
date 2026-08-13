@@ -1,4 +1,4 @@
-use crate::hal::display::VgaDisplay;
+
 use crate::applets::Applet;
 
 pub static APPLET: Applet = Applet {
@@ -12,7 +12,7 @@ use crate::hal::input::Ps2Keyboard;
 use crate::hal::rtc;
 use crate::hal::Display;
 
-pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, _args: &[&str]) {
+pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, _args: &[&str]) {
     let dt = rtc::read_datetime();
 
     let months = [

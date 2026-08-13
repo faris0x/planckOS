@@ -312,14 +312,14 @@ vbe_mode_scan:
 
     mov ax, [0x620C]                ; width
     mov bx, [0x620E]                ; height
-    cmp ax, 2560
-    jne .ms_chk1920
-    cmp bx, 1440
-    je .ms_found
-.ms_chk1920:
     cmp ax, 1920
-    jne .ms_chk1366
+    jne .ms_chk2560
     cmp bx, 1080
+    je .ms_found
+.ms_chk2560:
+    cmp ax, 2560
+    jne .ms_chk1366
+    cmp bx, 1440
     je .ms_found
 .ms_chk1366:
     cmp ax, 1366
@@ -382,13 +382,18 @@ vbe_mode_scan:
 bochs_vbe_setup:
     pusha
 
+    call pci_find_vga
+    cmp word [0x7000], 1
+    jne .bv_fail
+
     ; Check Bochs VBE presence by reading ID register
     mov dx, 0x1CE
     mov ax, 0
     out dx, ax
     mov dx, 0x1CF
     in ax, dx
-    cmp ax, 0xB0C4
+    and ax, 0xFFF0
+    cmp ax, 0xB0C0
     jne .bv_fail
 
     ; Disable while programming
@@ -403,14 +408,14 @@ bochs_vbe_setup:
     mov ax, 1
     out dx, ax
     mov dx, 0x1CF
-    mov ax, 2560
+    mov ax, 1920
     out dx, ax
 
     mov dx, 0x1CE
     mov ax, 2
     out dx, ax
     mov dx, 0x1CF
-    mov ax, 1440
+    mov ax, 1080
     out dx, ax
 
     mov dx, 0x1CE
@@ -427,19 +432,85 @@ bochs_vbe_setup:
     mov ax, 0x41          ; enable + LFB
     out dx, ax
 
-    ; Store boot info
+    ; Store boot info (framebuffer address already set by pci_find_vga)
     xor ax, ax
     mov ds, ax
     mov word [0x7000], 1
-    mov dword [0x7008], 0xFC000000
-    mov dword [0x7010], 2560
-    mov dword [0x7014], 1440
-    mov dword [0x7018], 2560 * 4
+    mov dword [0x7010], 1920
+    mov dword [0x7014], 1080
+    mov dword [0x7018], 1920 * 4
     mov byte [0x701C], 4
 
 .bv_fail:
     xor ax, ax
     mov ds, ax
+    popa
+    ret
+
+; ── PCI config space scan for QEMU VGA ────────────────────────
+; Scans bus 0, devices 0-31 for vendor 0x1234, device 0x1111.
+; Reads BAR0 (framebuffer address) and stores at [0x7008].
+; Sets [0x7000] = 1 on success, 0 on failure.
+pci_find_vga:
+    pusha
+    push es
+
+    xor ax, ax
+    mov es, ax
+    mov word [0x7000], 0
+
+    xor cx, cx          ; device counter (0-31)
+.pv_loop:
+    cmp cx, 32
+    jge .pv_done
+
+    ; Build PCI config address: bus=0, device=cx, func=0, reg=0
+    push cx
+    xor eax, eax
+    mov ax, cx
+    shl eax, 11         ; device << 11
+    or eax, 0x80000000  ; enable bit
+    mov dx, 0xCF8
+    o32 out dx, eax     ; write to config address port (32-bit)
+
+    ; Read vendor/device ID from offset 0
+    mov dx, 0xCFC
+    o32 in eax, dx
+    cmp eax, 0x11111234 ; vendor=0x1234, device=0x1111
+    pop cx
+    jne .pv_next
+
+    ; Found QEMU VGA! Read BAR0 from offset 0x10
+    push cx
+    xor eax, eax
+    mov ax, cx
+    shl eax, 11
+    or eax, 0x80000010  ; enable bit + offset 0x10
+    mov dx, 0xCF8
+    o32 out dx, eax
+
+    mov dx, 0xCFC
+    o32 in eax, dx
+    and eax, 0xFFFFFFF0 ; mask off lower 4 bits (flags)
+
+    ; Store framebuffer address at [0x7008]
+    xor bx, bx
+    mov es, bx
+    mov [es:0x7008], eax
+    mov dword [es:0x700C], 0  ; clear upper 32 bits
+    mov word [es:0x7000], 1   ; success
+
+    pop cx
+    jmp .pv_done
+
+.pv_next:
+    inc cx
+    jmp .pv_loop
+
+.pv_done:
+    xor ax, ax
+    mov es, ax
+    pop es
     popa
     ret
 

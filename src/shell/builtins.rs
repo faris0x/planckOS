@@ -1,8 +1,7 @@
-use crate::hal::display::VgaDisplay;
 use crate::hal::Display;
 use crate::applets::AppletRegistry;
 
-fn print_cmd(display: &mut VgaDisplay, name: &str, desc: &str) {
+fn print_cmd(display: &mut dyn Display, name: &str, desc: &str) {
     display.write("  ");
     display.write(name);
     let pad_len = 12usize.saturating_sub(name.len());
@@ -13,7 +12,7 @@ fn print_cmd(display: &mut VgaDisplay, name: &str, desc: &str) {
     display.writeln(desc);
 }
 
-pub fn print_help(display: &mut VgaDisplay, registry: &AppletRegistry) {
+pub fn print_help(display: &mut dyn Display, registry: &AppletRegistry) {
     display.writeln("Built-in commands:");
     print_cmd(display, "echo", "Prints text");
     print_cmd(display, "cls", "Clears screen");

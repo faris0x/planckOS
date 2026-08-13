@@ -1,8 +1,7 @@
 mod builtins;
 
-use crate::hal::display::VgaDisplay;
 use crate::hal::input::Ps2Keyboard;
-use crate::hal::{Display, Input};
+use crate::hal::{Display, DisplayBackend, Input};
 use crate::applets::AppletRegistry;
 use crate::applets::ls;
 use crate::applets::out;
@@ -15,7 +14,7 @@ const MAX_CMD: usize = 256;
 const HISTORY_SIZE: usize = 64;
 
 pub struct Shell {
-    display: VgaDisplay,
+    display: DisplayBackend,
     input: Ps2Keyboard,
     registry: AppletRegistry,
     cursor_pos: usize,
@@ -27,7 +26,7 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(
-        display: VgaDisplay,
+        display: DisplayBackend,
         input: Ps2Keyboard,
         registry: AppletRegistry,
     ) -> Self {

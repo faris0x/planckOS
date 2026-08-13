@@ -1,4 +1,4 @@
-use crate::hal::display::VgaDisplay;
+
 use alloc::vec::Vec;
 
 
@@ -8,7 +8,7 @@ use crate::hal::Display;
 
 const MAX_PATH: usize = 256;
 
-pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, args: &[&str]) {
+pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, args: &[&str]) {
     let (paths, recursive, force) = match parse_args(args) {
         Ok(r) => r,
         Err(e) => {
@@ -30,7 +30,7 @@ pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, args: &[&str]) {
     }
 }
 
-fn remove_path(display: &mut VgaDisplay, path: &str, recursive: bool, force: bool, path_buf: &mut [u8; MAX_PATH]) {
+fn remove_path(display: &mut dyn Display, path: &str, recursive: bool, force: bool, path_buf: &mut [u8; MAX_PATH]) {
     let info = match fat32::f_stat(path) {
         Ok(i) => i,
         Err(_) => {

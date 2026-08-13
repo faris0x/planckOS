@@ -8,7 +8,6 @@ pub mod mk;
 pub mod rm;
 pub mod cp;
 
-use crate::hal::display::VgaDisplay;
 use crate::hal::input::Ps2Keyboard;
 use crate::hal::Display;
 
@@ -17,7 +16,7 @@ use crate::hal::Display;
 pub struct Applet {
     pub name: &'static str,
     pub description: &'static str,
-    pub run: fn(&mut VgaDisplay, &mut Ps2Keyboard, &[&str]),
+    pub run: fn(&mut dyn Display, &mut Ps2Keyboard, &[&str]),
 }
 
 /// Registry of all compiled-in applets.

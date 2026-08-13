@@ -1,4 +1,4 @@
-use crate::hal::display::VgaDisplay;
+
 use alloc::vec::Vec;
 
 
@@ -57,7 +57,7 @@ fn parse_ls_args<'a>(args: &[&'a str]) -> Result<(Vec<&'a str>, LsFlags), &'stat
     Ok((paths, flags))
 }
 
-pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, args: &[&str]) {
+pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, args: &[&str]) {
     let (paths, flags) = match parse_ls_args(args) {
         Ok(r) => r,
         Err(e) => {
@@ -88,7 +88,7 @@ pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, args: &[&str]) {
     }
 }
 
-fn list_dir(display: &mut VgaDisplay, mut dir: fat32::Dir, flags: &LsFlags) {
+fn list_dir(display: &mut dyn Display, mut dir: fat32::Dir, flags: &LsFlags) {
     let mut entries: [LsEntry; MAX_ENTRIES] = unsafe { core::mem::zeroed() };
     let mut count = 0usize;
     let mut name = [0u8; 13];

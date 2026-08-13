@@ -1,4 +1,4 @@
-use crate::hal::display::VgaDisplay;
+
 use alloc::vec::Vec;
 
 
@@ -10,7 +10,7 @@ use crate::hal::Display;
 const BUF_SIZE: usize = 512;
 const MAX_PATH: usize = 256;
 
-pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, args: &[&str]) {
+pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, args: &[&str]) {
     let (sources, dest, recursive) = match parse_args(args) {
         Ok(r) => r,
         Err(e) => {
@@ -34,7 +34,7 @@ pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, args: &[&str]) {
 }
 
 fn copy_path(
-    display: &mut VgaDisplay,
+    display: &mut dyn Display,
     src: &str,
     dst: &str,
     recursive: bool,

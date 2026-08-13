@@ -1,4 +1,4 @@
-use crate::hal::display::VgaDisplay;
+
 use crate::applets::Applet;
 
 pub static APPLET: Applet = Applet {
@@ -15,7 +15,7 @@ use crate::hal::idt::TICK_COUNT;
 use crate::hal::Display;
 use core::sync::atomic::Ordering;
 
-pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, _args: &[&str]) {
+pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, _args: &[&str]) {
     let cpu = cpuid::query();
 
     display.writeln("planckOS v0.1 - System Information");

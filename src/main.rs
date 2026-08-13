@@ -8,6 +8,7 @@ mod shell;
 mod applets;
 
 use hal::display::VgaDisplay;
+use hal::framebuffer::FramebufferDisplay;
 use hal::input::Ps2Keyboard;
 use hal::idt::InterruptController;
 use hal::memory;
@@ -15,7 +16,7 @@ use hal::acpi;
 use hal::serial;
 use hal::ata::AtaChannel;
 use hal::fat32;
-use hal::{Display, Input};
+use hal::{Display, DisplayBackend, Input};
 use shell::Shell;
 
 #[panic_handler]
@@ -47,9 +48,24 @@ pub extern "C" fn _start() -> ! {
 
     serial::serial_debug(b"  [+] Kernel started in 64-bit mode\r\n\0");
 
-    // VGA display
-    let mut display = VgaDisplay::new();
-    display.init();
+    let boot_info = unsafe { read_boot_info() };
+
+    let mut display = if boot_info.vbe_available == 1 {
+        serial::serial_debug(b"  [+] VBE framebuffer available\r\n\0");
+        let fb_addr = boot_info.fb_addr;
+        let width = boot_info.width as usize;
+        let height = boot_info.height as usize;
+        let pitch = boot_info.pitch as usize;
+        let bpp = boot_info.bpp;
+        serial::serial_debug(b"  [+] Creating FramebufferDisplay\r\n\0");
+        DisplayBackend::Framebuffer(FramebufferDisplay::new(fb_addr, width, height, pitch, bpp))
+    } else {
+        serial::serial_debug(b"  [+] VBE unavailable, using VGA text mode\r\n\0");
+        let mut vga = VgaDisplay::new();
+        vga.init();
+        DisplayBackend::Vga(vga)
+    };
+
     display.writeln("planckOS v0.1 - x86-64 Rust");
 
     // Interrupt controller — uses a separate VGA for exception display

@@ -1,4 +1,4 @@
-use crate::hal::display::VgaDisplay;
+
 use alloc::vec::Vec;
 
 
@@ -7,7 +7,7 @@ use crate::hal::fat32;
 use crate::hal::fat32::{FA_WRITE, FA_CREATE_NEW};
 use crate::hal::Display;
 
-pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, args: &[&str]) {
+pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, args: &[&str]) {
     let (paths, parents) = match parse_args(args) {
         Ok(r) => r,
         Err(e) => {
@@ -27,7 +27,7 @@ pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, args: &[&str]) {
     }
 }
 
-fn show_err(display: &mut VgaDisplay, path: &str, label: &str, e: fat32::FError) {
+fn show_err(display: &mut dyn Display, path: &str, label: &str, e: fat32::FError) {
     display.write("mk: cannot create ");
     display.write(label);
     display.write(" '");
@@ -43,7 +43,7 @@ fn show_err(display: &mut VgaDisplay, path: &str, label: &str, e: fat32::FError)
     });
 }
 
-fn create_path(display: &mut VgaDisplay, path: &str, parents: bool) {
+fn create_path(display: &mut dyn Display, path: &str, parents: bool) {
     let is_dir = path.ends_with('/');
     let path = path.trim_end_matches('/');
     if path.is_empty() { return; }

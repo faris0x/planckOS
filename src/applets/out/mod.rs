@@ -1,4 +1,4 @@
-use crate::hal::display::VgaDisplay;
+
 
 use crate::hal::input::Ps2Keyboard;
 use crate::hal::fat32;
@@ -8,7 +8,7 @@ use crate::hal::Display;
 const BUF_SIZE: usize = 512;
 const HEX_COLS: usize = 16;
 
-pub fn run(display: &mut VgaDisplay, _input: &mut Ps2Keyboard, args: &[&str]) {
+pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, args: &[&str]) {
     let (path, limit) = match parse_args(args) {
         Ok(r) => r,
         Err(e) => {
