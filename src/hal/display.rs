@@ -65,6 +65,10 @@ impl Display for VgaDisplay {
     fn rows(&self) -> usize {
         HEIGHT
     }
+
+    fn show_cursor(&mut self) {
+        // VGA has hardware cursor support, no-op needed
+    }
 }
 
 // ── Implementation methods (trait-unaware, for internal use) ─────

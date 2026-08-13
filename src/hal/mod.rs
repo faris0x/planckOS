@@ -29,6 +29,7 @@ pub trait Display {
     fn reset_cursor(&mut self);
     fn cols(&self) -> usize;
     fn rows(&self) -> usize;
+    fn show_cursor(&mut self);
 }
 
 pub trait Input {
@@ -102,6 +103,13 @@ impl Display for DisplayBackend {
         match self {
             DisplayBackend::Vga(d) => d.rows(),
             DisplayBackend::Framebuffer(d) => d.rows(),
+        }
+    }
+
+    fn show_cursor(&mut self) {
+        match self {
+            DisplayBackend::Vga(d) => d.show_cursor(),
+            DisplayBackend::Framebuffer(d) => d.show_cursor(),
         }
     }
 }

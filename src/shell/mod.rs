@@ -71,7 +71,7 @@ impl Shell {
 
     fn redraw_input(&mut self, buf: &[u8], len: usize) {
         let prompt_len = 2;
-        let line_clear = self.display.cols().saturating_sub(prompt_len);
+        let line_clear = self.display.cols().saturating_sub(prompt_len).saturating_sub(1);
         self.display.putchar(0x0D);
         self.display.write(PROMPT);
         for _ in 0..line_clear {
@@ -91,6 +91,7 @@ impl Shell {
     pub fn run(mut self) -> ! {
         loop {
             self.display.write(PROMPT);
+            self.display.show_cursor();
             let mut buf = [0u8; MAX_CMD];
             let mut len = 0usize;
             self.cursor_pos = 0;
@@ -117,6 +118,7 @@ impl Shell {
                             self.cursor_pos -= 1;
                             len -= 1;
                             self.redraw_input(&buf, len);
+                            self.display.show_cursor();
                         }
                     }
                     // Left arrow
@@ -124,6 +126,7 @@ impl Shell {
                         if self.cursor_pos > 0 {
                             self.cursor_pos -= 1;
                             self.display.putchar(0x08);
+                            self.display.show_cursor();
                         }
                     }
                     // Right arrow
@@ -132,6 +135,7 @@ impl Shell {
                             let c = buf[self.cursor_pos];
                             self.display.putchar(c);
                             self.cursor_pos += 1;
+                            self.display.show_cursor();
                         }
                     }
                     // Up arrow — history back
@@ -143,6 +147,7 @@ impl Shell {
                             buf[..len].copy_from_slice(&entry[..len]);
                             self.cursor_pos = len;
                             self.redraw_input(&buf, len);
+                            self.display.show_cursor();
                         }
                     }
                     // Down arrow — history forward
@@ -160,6 +165,7 @@ impl Shell {
                                 self.cursor_pos = len;
                                 self.redraw_input(&buf, len);
                             }
+                            self.display.show_cursor();
                         }
                     }
                     // Printable characters
@@ -174,6 +180,7 @@ impl Shell {
                     self.cursor_pos += 1;
                     len += 1;
                     self.redraw_input(&buf, len);
+                    self.display.show_cursor();
                 }
             }
                     _ => {}

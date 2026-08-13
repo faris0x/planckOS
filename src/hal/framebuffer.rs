@@ -1,7 +1,7 @@
 use crate::hal::Display;
 use core::ptr;
 
-const FONT_DATA: &[u8] = include_bytes!("fonts/sun-16x32.psfu");
+const FONT_DATA: &[u8] = include_bytes!("fonts/spleen-32x64.psfu");
 
 // PSF2 header structure
 #[repr(C, packed)]
@@ -24,9 +24,13 @@ pub struct FramebufferDisplay {
     bpp: u8,
     cursor_x: usize,
     cursor_y: usize,
+    prev_cursor_x: usize,
+    prev_cursor_y: usize,
+    cursor_visible: bool,
     fg: u32,
     bg: u32,
     scale: usize,
+    downscale: usize,
     glyph_w: usize,
     glyph_h: usize,
     glyph_data: &'static [u8],
@@ -81,9 +85,13 @@ impl FramebufferDisplay {
             bpp,
             cursor_x: 0,
             cursor_y: 0,
+            prev_cursor_x: 0,
+            prev_cursor_y: 0,
+            cursor_visible: false,
             fg: 0x00FFFFFF,
             bg: 0x0017002E,
             scale: 1,
+            downscale: 2,
             glyph_w: g_w,
             glyph_h: g_h,
             glyph_data,
@@ -131,11 +139,16 @@ impl FramebufferDisplay {
 
         let glyph = &self.glyph_data[base..base + g_size];
         let scale = self.scale;
+        let downscale = self.downscale;
+        let rendered_w = self.glyph_w / downscale;
+        let rendered_h = self.glyph_h / downscale;
 
-        for row in 0..self.glyph_h {
-            for col in 0..self.glyph_w {
-                let byte_idx = row * (self.glyph_w / 8) + col / 8;
-                let bit_idx = 7 - (col % 8);
+        for row in 0..rendered_h {
+            for col in 0..rendered_w {
+                let src_row = row * downscale;
+                let src_col = col * downscale;
+                let byte_idx = src_row * (self.glyph_w / 8) + src_col / 8;
+                let bit_idx = 7 - (src_col % 8);
                 let on = if byte_idx < g_size {
                     (glyph[byte_idx] >> bit_idx) & 1
                 } else {
@@ -156,36 +169,84 @@ impl FramebufferDisplay {
             }
         }
     }
+
+    fn draw_cursor(&mut self) {
+        let char_w = (self.glyph_w / self.downscale) * self.scale;
+        let char_h = (self.glyph_h / self.downscale) * self.scale;
+        let cursor_h = 2;
+        let fb_width = self.pitch / 4;
+
+        // Erase cursor from previous position
+        if self.cursor_visible {
+            for y in (self.prev_cursor_y + char_h - cursor_h)..self.prev_cursor_y + char_h {
+                for x in self.prev_cursor_x..self.prev_cursor_x + char_w {
+                    if x < self.width && y < self.height {
+                        self.fb[y * fb_width + x] = self.bg;
+                    }
+                }
+            }
+        }
+
+        // Draw cursor at new position
+        for y in (self.cursor_y + char_h - cursor_h)..self.cursor_y + char_h {
+            for x in self.cursor_x..self.cursor_x + char_w {
+                if x < self.width && y < self.height {
+                    self.fb[y * fb_width + x] = self.fg;
+                }
+            }
+        }
+
+        // Update previous position
+        self.prev_cursor_x = self.cursor_x;
+        self.prev_cursor_y = self.cursor_y;
+        self.cursor_visible = true;
+    }
 }
 
 impl Display for FramebufferDisplay {
     fn putchar(&mut self, c: u8) {
+        let char_w = (self.glyph_w / self.downscale) * self.scale;
+        let char_h = (self.glyph_h / self.downscale) * self.scale;
+        
+        // Erase cursor from current position before drawing
+        if self.cursor_visible {
+            let cursor_h = 2;
+            let fb_width = self.pitch / 4;
+            for y in (self.cursor_y + char_h - cursor_h)..self.cursor_y + char_h {
+                for x in self.cursor_x..self.cursor_x + char_w {
+                    if x < self.width && y < self.height {
+                        self.fb[y * fb_width + x] = self.bg;
+                    }
+                }
+            }
+            self.cursor_visible = false;
+        }
+        
         match c {
             b'\r' => {
                 self.cursor_x = 0;
             }
             b'\n' => {
                 self.cursor_x = 0;
-                self.cursor_y += self.glyph_h * self.scale;
-                if self.cursor_y + self.glyph_h * self.scale > self.height {
+                self.cursor_y += char_h;
+                if self.cursor_y + char_h > self.height {
                     self.scroll();
                 }
             }
             0x08 => {
-                // Backspace
-                if self.cursor_x >= self.glyph_w * self.scale {
-                    self.cursor_x -= self.glyph_w * self.scale;
+                if self.cursor_x >= char_w {
+                    self.cursor_x -= char_w;
                 }
                 self.draw_glyph(self.glyph_index(b' '), self.cursor_x, self.cursor_y);
             }
             _ => {
                 let idx = self.glyph_index(c);
                 self.draw_glyph(idx, self.cursor_x, self.cursor_y);
-                self.cursor_x += self.glyph_w * self.scale;
-                if self.cursor_x + self.glyph_w * self.scale > self.width {
+                self.cursor_x += char_w;
+                if self.cursor_x + char_w > self.width {
                     self.cursor_x = 0;
-                    self.cursor_y += self.glyph_h * self.scale;
-                    if self.cursor_y + self.glyph_h * self.scale > self.height {
+                    self.cursor_y += char_h;
+                    if self.cursor_y + char_h > self.height {
                         self.scroll();
                     }
                 }
@@ -213,13 +274,16 @@ impl Display for FramebufferDisplay {
     }
 
     fn set_cursor(&mut self, row: usize, col: usize) {
-        self.cursor_x = col * self.glyph_w * self.scale;
-        self.cursor_y = row * self.glyph_h * self.scale;
+        let char_w = (self.glyph_w / self.downscale) * self.scale;
+        let char_h = (self.glyph_h / self.downscale) * self.scale;
+        self.cursor_x = col * char_w;
+        self.cursor_y = row * char_h;
     }
 
     fn scroll(&mut self) {
-        let row_bytes = self.glyph_h * self.scale * (self.pitch / 4);
-        let total_rows = self.height / (self.glyph_h * self.scale);
+        let char_h = (self.glyph_h / self.downscale) * self.scale;
+        let row_bytes = char_h * (self.pitch / 4);
+        let total_rows = self.height / char_h;
         let fb_width = self.pitch / 4;
 
         unsafe {
@@ -230,14 +294,14 @@ impl Display for FramebufferDisplay {
             );
         }
 
-        for y in (total_rows - 1) * (self.glyph_h * self.scale)..self.height {
+        for y in (total_rows - 1) * char_h..self.height {
             for x in 0..self.width {
                 self.fb[y * fb_width + x] = self.bg;
             }
         }
 
         if self.cursor_y > 0 {
-            self.cursor_y = self.cursor_y.saturating_sub(self.glyph_h * self.scale);
+            self.cursor_y = self.cursor_y.saturating_sub(char_h);
         }
     }
 
@@ -247,10 +311,16 @@ impl Display for FramebufferDisplay {
     }
 
     fn cols(&self) -> usize {
-        self.width / (self.glyph_w * self.scale)
+        let char_w = (self.glyph_w / self.downscale) * self.scale;
+        self.width / char_w
     }
 
     fn rows(&self) -> usize {
-        self.height / (self.glyph_h * self.scale)
+        let char_h = (self.glyph_h / self.downscale) * self.scale;
+        self.height / char_h
+    }
+
+    fn show_cursor(&mut self) {
+        self.draw_cursor();
     }
 }
