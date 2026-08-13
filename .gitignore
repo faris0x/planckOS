@@ -1,2 +1,11 @@
 target/
 PHASES.md
+boot_asm
+loader_asm
+kernel_bin
+boot.bin
+kernel.bin
+loader.bin
+loader_test.bin
+planckos.img
+planckos_fs.img

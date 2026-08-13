@@ -44,4 +44,5 @@ run-serial: all fs-img
 
 clean:
     rm -f boot_asm loader_asm kernel_bin planckos.img planckos_fs.img
+    rm -f boot.bin kernel.bin loader.bin loader_test.bin
     cargo clean
