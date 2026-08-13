@@ -2,6 +2,7 @@ pub mod display;
 pub mod input;
 pub mod idt;
 pub mod memory;
+pub mod heap;
 pub mod serial;
 pub mod acpi;
 pub mod cpuid;

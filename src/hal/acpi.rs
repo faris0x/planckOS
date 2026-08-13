@@ -1,7 +1,7 @@
 use core::ptr;
 use core::mem;
 
-use crate::hal::serial::{serial_write_str, serial_write_byte};
+use crate::hal::serial;
 
 // ── Memory limit ────────────────────────────────────────────────
 // Page tables currently map 0-64MB. ACPI tables above this range
@@ -11,6 +11,14 @@ const MAPPED_LIMIT: usize = 0x4000000; // 64MB
 
 fn is_mapped(addr: usize) -> bool {
     addr < MAPPED_LIMIT
+}
+
+fn log(msg: &str) {
+    serial::log("KERN", "ACPI", msg);
+}
+
+fn log_hex(prefix: &str, val: u64, suffix: &str) {
+    serial::log_hex("KERN", "ACPI", prefix, val, suffix);
 }
 
 // ── RSDP (Root System Description Pointer) ──────────────────────
@@ -114,7 +122,7 @@ pub fn is_ready() -> bool {
 /// Initialise ACPI: find RSDP, walk tables, extract FADT and DSDT for shutdown.
 pub fn init() {
     unsafe {
-        serial_write_str("  [ACPI] Scanning for RSDP...\r\n");
+        log("scanning BIOS ROM 0xE0000..0xFFFFF for RSDP");
 
         // Search for RSDP in the BIOS memory area (EBDA: 0x000E0000 – 0x000FFFFF)
         let bios_start = 0x000E0000 as *const u8;
@@ -126,16 +134,14 @@ pub fn init() {
             let sig = ptr::read_unaligned(addr as *const [u8; 8]);
             if &sig == b"RSD PTR " {
                 rsdp_addr = addr;
-                serial_write_str("  [ACPI] RSDP found at 0x");
-                print_hex(addr as u64);
-                serial_write_str("\r\n");
+                log_hex("RSDP found at ", addr as u64, "");
                 break;
             }
             addr = addr.add(16);
         }
 
         if rsdp_addr.is_null() {
-            serial_write_str("  [ACPI] RSDP not found — ACPI unavailable\r\n");
+            log("RSDP not found - ACPI unavailable");
             return;
         }
 
@@ -148,34 +154,34 @@ pub fn init() {
             sum = sum.wrapping_add(ptr::read_unaligned(rsdp_addr.add(i)));
         }
         if sum != 0 {
-            serial_write_str("  [ACPI] RSDP checksum failed\r\n");
+            log("RSDP checksum FAILED");
             return;
         }
-        serial_write_str("  [ACPI] RSDP checksum OK\r\n");
+        log("RSDP checksum OK");
 
         // Walk XSDT (preferred) or RSDT to find FADT
         let sdt_addr = if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {
-            serial_write_str("  [ACPI] Using XSDT\r\n");
+            log("using XSDT (ACPI 2.0+)");
             rsdp.xsdt_addr as *const SdtHeader
         } else {
-            serial_write_str("  [ACPI] Using RSDT\r\n");
+            log("using RSDT (ACPI 1.0)");
             rsdp.rsdt_addr as *const SdtHeader
         };
 
         if !is_mapped(sdt_addr as usize) {
-            serial_write_str("  [ACPI] SDT outside mapped range\r\n");
+            log("SDT outside mapped range");
             return;
         }
 
         let sdt = &*sdt_addr;
         let num_entries = (sdt.length as usize - mem::size_of::<SdtHeader>()) / 8;
 
-        serial_write_str("  [ACPI] SDT has ");
-        print_hex(num_entries as u64);
-        serial_write_str(" entries\r\n");
+        log("walking SDT entries");
+        let _ = num_entries;
 
         // Find FADT (signature "FACP")
         let entries_ptr = (sdt_addr as *const u8).add(mem::size_of::<SdtHeader>()) as *const u64;
+        let mut fadt_found = false;
         for i in 0..num_entries {
             let entry_addr = ptr::read_unaligned(entries_ptr.add(i)) as *const SdtHeader;
             if entry_addr.is_null() || !is_mapped(entry_addr as usize) {
@@ -186,10 +192,8 @@ pub fn init() {
             if &sig == b"FACP" {
                 let fadt = &*(entry_addr as *const Fadt);
                 PM1A_CNT_BLK = fadt.pm1a_cnt_blk;
-                serial_write_str("  [ACPI] FADT found\r\n");
-                serial_write_str("  [ACPI] PM1a_CNT_BLK = 0x");
-                print_hex(PM1A_CNT_BLK as u64);
-                serial_write_str("\r\n");
+                log_hex("FADT found, PM1a_CNT_BLK = ", PM1A_CNT_BLK as u64, "");
+                fadt_found = true;
 
                 // Parse DSDT for \_S5 package
                 let dsdt_addr = if fadt.x_dsdt_addr != 0 {
@@ -199,24 +203,22 @@ pub fn init() {
                 };
 
                 if !dsdt_addr.is_null() && is_mapped(dsdt_addr as usize) {
-                    serial_write_str("  [ACPI] DSDT at 0x");
-                    print_hex(dsdt_addr as u64);
-                    serial_write_str("\r\n");
+                    log_hex("DSDT at ", dsdt_addr as u64, "");
                     parse_s5(dsdt_addr);
                 } else if !dsdt_addr.is_null() {
-                    serial_write_str("  [ACPI] DSDT outside mapped range\r\n");
+                    log("DSDT outside mapped range");
                 }
                 break;
             }
         }
 
-        if PM1A_CNT_BLK == 0 {
-            serial_write_str("  [ACPI] FADT not found\r\n");
+        if !fadt_found {
+            log("FADT not found");
             return;
         }
 
         ACPI_READY = true;
-        serial_write_str("  [ACPI] ACPI initialised\r\n");
+        log("ACPI initialised - S5 shutdown available");
     }
 }
 
@@ -247,9 +249,7 @@ unsafe fn parse_s5(dsdt_addr: *const u8) {
                 && data[i + 3] == b'5'
                 && data[i + 4] == 0x00
             {
-                serial_write_str("  [ACPI] \\_S5 found at DSDT offset 0x");
-                print_hex(i as u64);
-                serial_write_str("\r\n");
+                log_hex("\\_S5 found at DSDT offset ", i as u64, "");
 
                 // After NameOp + name (5 bytes), the next byte should be a PackageOp (0x12)
                 if i + 5 < dsdt_len && data[i + 5] == 0x12 {
@@ -276,11 +276,8 @@ unsafe fn parse_s5(dsdt_addr: *const u8) {
                                     S5_SLP_TYPb = data[offset];
                                 }
                             }
-                            serial_write_str("  [ACPI] S5 SLP_TYPa = ");
-                            print_hex(S5_SLP_TYPa as u64);
-                            serial_write_str(", SLP_TYPb = ");
-                            print_hex(S5_SLP_TYPb as u64);
-                            serial_write_str("\r\n");
+                            log_hex("S5 SLP_TYPa = ", S5_SLP_TYPa as u64, "");
+                            log_hex("S5 SLP_TYPb = ", S5_SLP_TYPb as u64, "");
                         }
                     }
                 }
@@ -289,7 +286,7 @@ unsafe fn parse_s5(dsdt_addr: *const u8) {
         }
     }
 
-    serial_write_str("  [ACPI] \\_S5 not found in DSDT\r\n");
+    log("\\_S5 not found in DSDT, shutdown via ACPI unavailable");
 }
 
 /// Shutdown the system using ACPI.
@@ -313,15 +310,6 @@ pub fn shutdown() {
         }
     }
 }
-
-fn print_hex(val: u64) {
-    let hex = b"0123456789ABCDEF";
-    for i in (0..16).rev() {
-        let nybble = ((val >> (i * 4)) & 0xF) as usize;
-        serial_write_byte(hex[nybble]);
-    }
-}
-
 unsafe fn outb(port: u16, val: u8) {
     core::arch::asm!("out dx, al", in("dx") port, in("al") val, options(nomem, nostack));
 }

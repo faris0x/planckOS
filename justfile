@@ -16,6 +16,10 @@ kernel_bin:
     cargo build --target x86_64-unknown-none --release
     objcopy -O binary target/x86_64-unknown-none/release/planckos kernel_bin
 
+# Host-side heap allocator stress tests (exhaustive, no QEMU needed)
+test-alloc:
+    cargo test --manifest-path tests/allocator/Cargo.toml
+
 # Create FAT32 filesystem image (64MB)
 fs-img:
     dd if=/dev/zero of=planckos_fs.img bs=512 count=131072 2>/dev/null

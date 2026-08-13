@@ -2,6 +2,7 @@
 pub mod sysinfo;
 #[cfg(applet_datetime)]
 pub mod datetime;
+pub mod heap;
 pub mod ls;
 pub mod out;
 pub mod mk;
@@ -45,6 +46,7 @@ static APPLET_LIST: &[Applet] = &[
     sysinfo::APPLET,
     #[cfg(applet_datetime)]
     datetime::APPLET,
+    heap::APPLET,
 ];
 
 /// Build the applet registry from all enabled applet modules.

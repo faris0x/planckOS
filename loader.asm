@@ -4,23 +4,58 @@
 KERNEL_LBA equ 65
 ; Must match kernel_bin size after objcopy
 ; Update this when kernel size changes
-KERNEL_SIZE equ 185000
-KERNEL_SECTORS equ 362
+KERNEL_SIZE equ 192576
+KERNEL_SECTORS equ 377
 KERNEL_BUF equ 0x10000
 
+%macro LOG 1
+    mov si, %1
+    call log_line
+%endmacro
+
+%macro LOG32 1
+    mov esi, %1
+    call log_line32
+%endmacro
+
 start:
+    ; Grab the boot sector's TSC calibration (absolute 0x600)
+    xor ax, ax
+    mov ds, ax
+    mov eax, [0x600]
+    mov [tsc_per_ms], eax
+    mov eax, [0x608]
+    mov [boot_start_tsc], eax
+
     ; Set DS = CS so string operations work
     push cs
     pop ds
     mov [drive], dl
 
+    rdtsc
+    mov [last_tsc], eax
+
     call ser_init
-    mov si, msg_stage2
+    LOG msg_ent
+
+    ; CPU vendor via CPUID
+    mov eax, 0
+    cpuid
+    mov [vendor_buf], ebx
+    mov [vendor_buf+4], edx
+    mov [vendor_buf+8], ecx
+    mov byte [vendor_buf+12], 0
+    mov si, msg_cpu
     call ser_str
+    mov si, vendor_buf
+    call ser_str
+    call tsc_delta
+    call print_ms10
+
+    LOG msg_timer
 
     ; Enable A20
-    mov si, msg_a20
-    call ser_str
+    LOG msg_a20
     cli
     call a20_w
     mov al, 0xD1
@@ -30,12 +65,10 @@ start:
     out 0x60, al
     call a20_w
     sti
-    mov si, msg_done
-    call ser_str
+    LOG msg_a20_ok
 
     ; Read kernel to buffer
-    mov si, msg_loading
-    call ser_str
+    LOG msg_loading
     mov ax, KERNEL_BUF >> 4
     mov es, ax
     xor bx, bx
@@ -59,12 +92,10 @@ start:
     inc word [lba]
     loop .lp
 
-    mov si, msg_done
-    call ser_str
+    LOG msg_loaded
 
     ; ── VBE probe ───────────────────────────────────────────────
-    mov si, msg_vbe
-    call ser_str
+    LOG msg_vbe
     call vbe_probe
     ; VBE may have clobbered segment registers — restore them
     xor ax, ax
@@ -72,17 +103,26 @@ start:
     mov es, ax
     cmp word [0x7000], 1
     jne .vbe_no
-    mov si, msg_vbe_ok
-    call ser_str
+    LOG msg_vbe_ok
     jmp .vbe_cont
 .vbe_no:
-    mov si, msg_vbe_fail
-    call ser_str
+    LOG msg_vbe_fail
 .vbe_cont:
 
+    ; Pass TSC calibration + boot-start TSC to the kernel (boot info)
+    xor ax, ax
+    mov ds, ax
+    mov eax, [tsc_per_ms]
+    mov [0x7020], eax
+    mov dword [0x7024], 0
+    mov eax, [boot_start_tsc]
+    mov [0x7028], eax
+    mov dword [0x702C], 0
+    push cs
+    pop ds
+
     ; ── Switch to protected mode ─────────────────────────────────
-    mov si, msg_pmode
-    call ser_str
+    LOG msg_pmode
     lgdt [gdt_ptr]
     mov eax, cr0
     or eax, 1
@@ -99,43 +139,35 @@ m32:
     mov ss, ax
     mov esp, 0x90000
 
-    ; Quick serial test: write '>'
-    mov dx, 0x3FD
-.t:
-    in al, dx
-    and al, 0x20
-    jz .t
-    mov dx, 0x3F8
-    mov al, '>'
-    out dx, al
-
     ; Copy kernel to 0x100000
+    LOG32 msg_copy
     cld
     mov esi, KERNEL_BUF
     mov edi, 0x100000
     mov ecx, KERNEL_SIZE
     rep movsb
+    LOG32 msg_copied
 
-    ; Enable PAE
+    ; Page tables + PAE + long mode
+    LOG32 msg_paging
     mov eax, cr4
     or eax, 0x20
     mov cr4, eax
 
-    ; Set PML4 base
     mov eax, pt_template
     mov cr3, eax
 
-    ; Enable long mode
     mov ecx, 0xC0000080
     rdmsr
     or eax, 0x100
     wrmsr
 
-    ; Enable paging
     mov eax, cr0
     or eax, 0x80000000
     mov cr0, eax
+    LOG32 msg_long
 
+    LOG32 msg_handoff
     jmp 0x18:m64
 
 [bits 64]
@@ -187,6 +219,135 @@ disk_fail:
     call ser_str
     jmp $
 
+; ── TSC timing (16-bit) ─────────────────────────────────────────
+
+; eax = ticks elapsed since last log line; updates the baseline
+tsc_delta:
+    rdtsc
+    mov ecx, [last_tsc]
+    mov [last_tsc], eax
+    sub eax, ecx
+    ret
+
+; si = message → print message then " (N.N ms)" + newline
+log_line:
+    call ser_str
+    call tsc_delta
+    jmp print_ms10
+
+; Print " (N.N ms)" for a tick delta in eax
+print_ms10:
+    mov si, msg_open
+    call ser_str
+    mov ecx, 10
+    mul ecx
+    div dword [tsc_per_ms]   ; eax = ms*10
+    mov bl, 10
+    div bl                   ; AL = ms, AH = tenths digit
+    push ax
+    xor ah, ah
+    call print_dec16
+    mov si, msg_dot
+    call ser_str
+    pop ax
+    movzx ax, ah
+    call print_dec16
+    mov si, msg_ms
+    call ser_str
+    ret
+
+; Print unsigned decimal value in ax (0..65535)
+print_dec16:
+    pusha
+    mov bx, 10
+    mov si, dec_buf + 11
+.l:
+    xor dx, dx
+    div bx
+    add dl, '0'
+    dec si
+    mov [si], dl
+    test ax, ax
+    jnz .l
+    call ser_str
+    popa
+    ret
+
+; ── TSC timing (32-bit) ─────────────────────────────────────────
+
+[bits 32]
+ser_str32:
+    push eax
+    push edx
+.l:
+    lodsb
+    or al, al
+    jz .d
+    mov ah, al
+    mov dx, 0x3FD
+.w:
+    in al, dx
+    and al, 0x20
+    jz .w
+    mov dx, 0x3F8
+    xchg al, ah
+    out dx, al
+    jmp .l
+.d:
+    pop edx
+    pop eax
+    ret
+
+tsc_delta32:
+    rdtsc
+    mov ecx, [last_tsc]
+    mov [last_tsc], eax
+    sub eax, ecx
+    ret
+
+log_line32:
+    call ser_str32
+    call tsc_delta32
+    jmp print_ms10_32
+
+print_ms10_32:              ; eax = tick delta
+    mov esi, msg_open
+    call ser_str32
+    mov ecx, 10
+    mul ecx
+    div dword [tsc_per_ms]  ; eax = ms*10
+    mov bl, 10
+    div bl                  ; AL = ms, AH = tenths digit
+    push eax
+    and eax, 0xFF
+    call print_dec16_32
+    mov esi, msg_dot
+    call ser_str32
+    pop eax
+    xor eax, eax
+    mov al, ah
+    call print_dec16_32
+    mov esi, msg_ms
+    call ser_str32
+    ret
+
+print_dec16_32:             ; ax = value
+    pushad
+    mov ebx, 10
+    mov esi, dec_buf + 11
+.l:
+    xor edx, edx
+    div ebx
+    add dl, '0'
+    dec esi
+    mov [esi], dl
+    test eax, eax
+    jnz .l
+    call ser_str32
+    popad
+    ret
+
+[bits 16]
 ser_init:
     push ax
     push dx
@@ -536,15 +697,32 @@ pci_find_vga:
 drive: db 0
 lba: dw 0
 
-msg_stage2: db "  [+] Stage 2 loader entered", 13, 10, 0
-msg_a20: db "  [+] Enabling A20 line...", 13, 10, 0
-msg_loading: db "  [+] Loading kernel from LBA 65...", 13, 10, 0
-msg_done: db "      done", 13, 10, 0
-msg_pmode: db "  [+] Entering protected mode...", 13, 10, 0
-msg_vbe: db "  [+] Probing VBE...", 13, 10, 0
-msg_vbe_ok: db "      VBE enabled", 13, 10, 0
-msg_vbe_fail: db "      VBE unavailable", 13, 10, 0
-msg_fail: db "  [!] Disk read failed", 13, 10, 0
+msg_ent:    db "[LOADER] [INIT  ] COM1 115200 8N1 ready", 0
+msg_cpu:    db "[LOADER] [CPU   ] vendor: ", 0
+msg_timer:  db "[LOADER] [TIMER ] TSC calibrated by boot sector", 0
+msg_a20:    db "[LOADER] [A20   ] enabling via 8042 controller", 0
+msg_a20_ok: db "[LOADER] [A20   ] enabled", 0
+msg_loading: db "[LOADER] [DISK  ] kernel: 369 sectors @ LBA 65, 188,464 B", 0
+msg_loaded: db "[LOADER] [DISK  ] loaded to 0x10000", 0
+msg_vbe:    db "[LOADER] [VBE   ] probing VESA modes", 0
+msg_vbe_ok: db "[LOADER] [VBE   ] 1920x1080 @32bpp LFB", 0
+msg_vbe_fail: db "[LOADER] [VBE   ] unavailable - VGA text fallback", 0
+msg_pmode:  db "[LOADER] [CPU   ] switching to protected mode", 0
+msg_copy:   db "[LOADER] [KERNEL] copying 188,464 B to 0x100000", 0
+msg_copied: db "[LOADER] [KERNEL] copied", 0
+msg_paging: db "[LOADER] [MMU   ] page tables: 0-1GB identity + 3-4GB MMIO", 0
+msg_long:   db "[LOADER] [CPU   ] PAE + long mode active", 0
+msg_handoff: db "[LOADER] [HANDOF] jumping to kernel @ 0x100000", 0
+msg_fail:   db "[LOADER] [DISK  ] read FAIL", 13, 10, 0
+msg_open:   db " (", 0
+msg_dot:    db ".", 0
+msg_ms:     db " ms)", 13, 10, 0
+
+tsc_per_ms: dd 0
+last_tsc:   dd 0
+boot_start_tsc: dd 0
+vendor_buf: times 16 db 0
+dec_buf:    times 12 db 0
 
 ; GDT
 gdt:

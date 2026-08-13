@@ -1686,38 +1686,30 @@ fn resolve_path<'a>(vol: &mut FatVolume, path: &'a str) -> FResult<(u32, &'a str
 
 // ── Test suite ───────────────────────────────────────────────
 
-fn test_msg(msg: &[u8]) {
-    crate::hal::serial::serial_debug(b"  [FATTEST] \0");
-    crate::hal::serial::serial_debug(msg);
-}
-
-fn test_ok() {
-    crate::hal::serial::serial_debug(b" PASS\r\n\0");
-}
-
-fn test_fail(err: &FError) {
-    crate::hal::serial::serial_debug(b" FAIL: \0");
-    let err_str: &[u8] = match err {
-        FError::Ok => &b"Ok\0"[..],
-        FError::DiskErr => &b"DiskErr\0"[..],
-        FError::NoFile => &b"NoFile\0"[..],
-        FError::NoPath => &b"NoPath\0"[..],
-        FError::NotFound => &b"NotFound\0"[..],
-        FError::Denied => &b"Denied\0"[..],
-        FError::Exists => &b"Exists\0"[..],
-        FError::Invalid => &b"Invalid\0"[..],
-        _ => &b"Other\0"[..],
-    };
-    crate::hal::serial::serial_debug(err_str);
-    crate::hal::serial::serial_debug(b"\r\n\0");
+fn test_fail_str(err: &FError) -> &'static str {
+    match err {
+        FError::Ok => "Ok",
+        FError::DiskErr => "DiskErr",
+        FError::NoFile => "NoFile",
+        FError::NoPath => "NoPath",
+        FError::NotFound => "NotFound",
+        FError::Denied => "Denied",
+        FError::Exists => "Exists",
+        FError::Invalid => "Invalid",
+        _ => "Other",
+    }
 }
 
 fn test_run(name: &[u8], f: fn() -> Result<(), FError>) {
-    test_msg(name);
-    match f() {
-        Ok(()) => test_ok(),
-        Err(e) => test_fail(&e),
-    }
+    let start = crate::hal::serial::rdtsc();
+    let result = f();
+    let ms10 = crate::hal::serial::ms10_since(start);
+    let name = core::str::from_utf8(name).unwrap_or("?").trim_end_matches('\0');
+    let msg = match result {
+        Ok(()) => alloc::format!("{} PASS", name),
+        Err(e) => alloc::format!("{} FAIL: {}", name, test_fail_str(&e)),
+    };
+    crate::hal::serial::log_ms("FS", "TEST", &msg, ms10);
 }
 
 pub fn fat32_test() {
@@ -1728,7 +1720,7 @@ pub fn fat32_test() {
     let _ = f_unlink("/testdir/hello.txt");
     let _ = f_unlink("/testdir");
     let _ = f_unlink("/README.TXT");
-    crate::hal::serial::serial_debug(b"  [FATTEST] Cleanup done\r\n\0");
+    crate::hal::serial::log("FS", "PREP", "cleanup of previous-run test artifacts done");
 
     // Direct ATA sector test — verify r/w on a known-good LBA (cluster 2, root dir)
     test_run(b"ATA sector r/w\0", || {
@@ -1993,5 +1985,5 @@ pub fn fat32_test() {
         f_mkdir("testdir")
     });
 
-    crate::hal::serial::serial_debug(b"  [FATTEST] All tests complete\r\n\0");
+    crate::hal::serial::log("FS", "DONE", "all filesystem self-tests complete");
 }
