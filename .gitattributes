@@ -1,0 +1,4 @@
+*.asm linguist-language=NASM
+*.psfu linguist-vendored
+linker.ld linguist-language=Linker Script
+justfile linguist-language=Just
