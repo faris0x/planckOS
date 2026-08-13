@@ -4,8 +4,8 @@
 KERNEL_LBA equ 65
 ; Must match kernel_bin size after objcopy
 ; Update this when kernel size changes
-KERNEL_SIZE equ 185000
-KERNEL_SECTORS equ 362
+KERNEL_SIZE equ 87000
+KERNEL_SECTORS equ 170
 KERNEL_BUF equ 0x10000
 
 start:

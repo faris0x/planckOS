@@ -57,6 +57,14 @@ impl Display for VgaDisplay {
     fn reset_cursor(&mut self) {
         self.reset_cursor_impl();
     }
+
+    fn cols(&self) -> usize {
+        WIDTH
+    }
+
+    fn rows(&self) -> usize {
+        HEIGHT
+    }
 }
 
 // ── Implementation methods (trait-unaware, for internal use) ─────

@@ -1,7 +1,7 @@
 use crate::hal::Display;
 use core::ptr;
 
-const FONT_DATA: &[u8] = include_bytes!("fonts/spleen-32x64.psfu");
+const FONT_DATA: &[u8] = include_bytes!("fonts/sun-16x32.psfu");
 
 // PSF2 header structure
 #[repr(C, packed)]
@@ -82,7 +82,7 @@ impl FramebufferDisplay {
             cursor_x: 0,
             cursor_y: 0,
             fg: 0x00FFFFFF,
-            bg: 0x00000000,
+            bg: 0x0017002E,
             scale: 1,
             glyph_w: g_w,
             glyph_h: g_h,
@@ -176,7 +176,7 @@ impl Display for FramebufferDisplay {
                 if self.cursor_x >= self.glyph_w * self.scale {
                     self.cursor_x -= self.glyph_w * self.scale;
                 }
-                self.draw_glyph(0, self.cursor_x, self.cursor_y); // space glyph
+                self.draw_glyph(self.glyph_index(b' '), self.cursor_x, self.cursor_y);
             }
             _ => {
                 let idx = self.glyph_index(c);
@@ -244,5 +244,13 @@ impl Display for FramebufferDisplay {
     fn reset_cursor(&mut self) {
         self.cursor_x = 0;
         self.cursor_y = 0;
+    }
+
+    fn cols(&self) -> usize {
+        self.width / (self.glyph_w * self.scale)
+    }
+
+    fn rows(&self) -> usize {
+        self.height / (self.glyph_h * self.scale)
     }
 }

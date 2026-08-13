@@ -70,9 +70,9 @@ impl Shell {
     }
 
     fn redraw_input(&mut self, buf: &[u8], len: usize) {
-        // Clear the current input line and redraw from scratch
-        let line_clear = 78; // WIDTH - PROMPT_LEN
-        self.display.putchar(0x0D); // carriage return to column 0
+        let prompt_len = 2;
+        let line_clear = self.display.cols().saturating_sub(prompt_len);
+        self.display.putchar(0x0D);
         self.display.write(PROMPT);
         for _ in 0..line_clear {
             self.display.putchar(b' ');
@@ -82,7 +82,6 @@ impl Shell {
         for &b in &buf[..len] {
             self.display.putchar(b);
         }
-        // Place cursor at cursor_pos (after prompt)
         let moves = len.saturating_sub(self.cursor_pos);
         for _ in 0..moves {
             self.display.putchar(0x08);
@@ -165,7 +164,8 @@ impl Shell {
                     }
                     // Printable characters
             c if c >= 0x20 && c < 0x7F => {
-                if len < 78 {
+                let max_len = self.display.cols().saturating_sub(2);
+                if len < max_len {
                     // Shift characters right to make room
                     for i in (self.cursor_pos..len).rev() {
                         buf[i + 1] = buf[i];
