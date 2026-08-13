@@ -66,6 +66,8 @@ pub extern "C" fn _start() -> ! {
     };
 
     display.writeln("planckOS v0.1 - x86-64 Rust");
+    display.writeln("Copyright (C) 2026 Faris Alfarhan");
+    display.writeln("Licensed GPLv3");
 
     // Interrupt controller — uses a separate VGA for exception display
     let mut idt = InterruptController::new(VgaDisplay::new());

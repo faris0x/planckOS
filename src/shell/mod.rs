@@ -284,6 +284,8 @@ impl Shell {
             b"banner" => {
                 self.display.clear();
                 self.display.writeln("planckOS v0.1 - x86-64 Rust");
+                self.display.writeln("Copyright (C) 2026 Faris Alfarhan");
+                self.display.writeln("Licensed GPLv3");
                 true
             }
             b"help" => {
