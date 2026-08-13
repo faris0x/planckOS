@@ -1,0 +1,14 @@
+[package]
+name = "planckos"
+version = "0.1.0"
+edition = "2021"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ["cfg(applet_sysinfo)", "cfg(applet_datetime)"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
+debug = true

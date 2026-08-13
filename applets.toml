@@ -1,0 +1,17 @@
+# planckOS Applet Configuration
+#
+# Set applets to true/false to include or exclude them from the build.
+# To add a new applet:
+#   1. Create src/applets/<name>/mod.rs
+#   2. Add it to the [applets] section below
+#   3. Add #[cfg(applet_<name>)] pub mod <name>; to src/applets/mod.rs
+#   4. Call register_applet!() in your applet's mod.rs
+
+[applets]
+sysinfo = true
+datetime = true
+fastfetch = false
+editor = false
+qasm = false
+linux_shim = false
+benchmark = false
