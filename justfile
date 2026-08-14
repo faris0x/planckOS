@@ -32,15 +32,21 @@ run-sdl: all fs-img
     qemu-system-x86_64 \
       -drive format=raw,file=planckos.img \
       -drive format=raw,file=planckos_fs.img,index=2 \
-      -no-reboot -m 128M \
+      -no-reboot -m 128M -smp 2 \
       -device VGA,xres=1920,yres=1080
 
 run-serial: all fs-img
     qemu-system-x86_64 \
       -drive format=raw,file=planckos.img \
       -drive format=raw,file=planckos_fs.img,index=2 \
-      -no-reboot -m 128M -serial stdio \
+      -no-reboot -m 128M -smp 2 -serial stdio \
       -device VGA,xres=1920,yres=1080
+
+# SMP bring-up test (4 cores, serial console)
+run-smp: all
+    qemu-system-x86_64 \
+      -drive format=raw,file=planckos.img \
+      -no-reboot -m 128M -smp 4 -serial stdio
 
 clean:
     rm -f boot_asm loader_asm kernel_bin planckos.img planckos_fs.img

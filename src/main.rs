@@ -13,6 +13,8 @@ use hal::input::Ps2Keyboard;
 use hal::idt::InterruptController;
 use hal::memory;
 use hal::acpi;
+use hal::apic;
+use hal::smp;
 use hal::serial;
 use hal::ata::AtaChannel;
 use hal::fat32;
@@ -81,18 +83,26 @@ pub extern "C" fn _start() -> ! {
     display.writeln("Copyright (C) 2026 Faris Alfarhan");
     display.writeln("Licensed GPLv3");
 
-    // Interrupt controller — uses a separate VGA for exception display
+    // ACPI tables (MADT provides the APIC topology for SMP)
+    acpi::init();
+
+    // Interrupt controller — uses a separate VGA for exception display.
+    // The IDT is loaded first so any fault during APIC setup is visible.
     let mut idt = InterruptController::new(VgaDisplay::new());
     idt.init();
-    serial::log("KERN", "IDT", "256-vector IDT loaded, PIC remapped to 0x20-0x2F, PIT IRQ0 armed");
+    serial::log("KERN", "IDT", "256-vector IDT loaded");
+
+    // APIC: local APIC + IO-APIC + PIC bypass; APIC timer armed.
+    apic::init();
+    serial::log("KERN", "APIC", "local APIC + IO-APIC + PIC bypass ready");
 
     // PS/2 keyboard
     let mut input = Ps2Keyboard::new();
     input.init();
     serial::log("KERN", "INPUT", "PS/2 keyboard controller ready");
 
-    // ACPI tables
-    acpi::init();
+    // SMP: boot secondary cores via INIT-SIPI
+    smp::init();
 
     // Probe secondary master for FAT32 filesystem
     unsafe {
@@ -117,6 +127,10 @@ pub extern "C" fn _start() -> ! {
 
     // Enable interrupts
     unsafe { core::arch::asm!("sti", options(nomem, nostack)) }
+
+    // Converge the APIC timer to ~1000 Hz and verify.
+    apic::calibrate_hz();
+    apic::verify_hz("post-cal check");
 
     // Build applet registry
     let registry = crate::applets::build_registry();

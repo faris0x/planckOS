@@ -1,10 +1,13 @@
 use super::display::VgaDisplay;
 use super::input;
+use super::apic;
+use super::serial;
+use super::smp;
 use super::Display;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-/// Number of timer ticks since boot (~18.2 Hz on legacy PIT).
+/// Number of timer ticks since boot (~1000 Hz local APIC timer).
 pub static TICK_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 // ── ISR stubs ────────────────────────────────────────────────────
@@ -56,6 +59,8 @@ core::arch::global_asm!(
     "isr_32: push 0; push 32; jmp idt_common",
     ".globl isr_33",
     "isr_33: push 0; push 33; jmp idt_common",
+    ".globl isr_64",
+    "isr_64: push 0; push 64; jmp idt_common",
     "idt_common:",
     "  push rax",
     "  push rcx",
@@ -118,13 +123,14 @@ extern "C" {
     fn isr_20();
     fn isr_32();
     fn isr_33();
+    fn isr_64();
 }
 
 // ── IDT structures ───────────────────────────────────────────────
 
 #[repr(C, packed(2))]
 #[derive(Clone, Copy)]
-struct IdtEntry {
+pub(crate) struct IdtEntry {
     offset_low: u16,
     selector: u16,
     ist: u8,
@@ -134,109 +140,81 @@ struct IdtEntry {
     reserved: u32,
 }
 
+impl IdtEntry {
+    pub(crate) const fn zero() -> Self {
+        IdtEntry {
+            offset_low: 0,
+            selector: 0,
+            ist: 0,
+            flags: 0,
+            offset_mid: 0,
+            offset_high: 0,
+            reserved: 0,
+        }
+    }
+}
+
 #[repr(C, packed(2))]
 struct Idtr {
     limit: u16,
     base: u64,
 }
 
-const IDT_ENTRIES: usize = 256;
-static mut IDT: [IdtEntry; IDT_ENTRIES] = [IdtEntry {
-    offset_low: 0,
-    selector: 0,
-    ist: 0,
-    flags: 0,
-    offset_mid: 0,
-    offset_high: 0,
-    reserved: 0,
-}; IDT_ENTRIES];
-
 const GDT_CODE64: u16 = 0x18;
 const IDT_INTR_GATE: u8 = 0x8E;
 
-// ── PIC / IDT management ─────────────────────────────────────────
+// Vector map: 0x20 APIC timer, 0x21 PS/2 keyboard, 0x40 IPI doorbell.
+const TIMER_VECTOR: u8 = 0x20;
+const KBD_VECTOR: u8 = 0x21;
+const IPI_VECTOR: u8 = 0x40;
 
-pub struct InterruptController {
-    display: VgaDisplay,
-}
-
-impl InterruptController {
-    pub const fn new(display: VgaDisplay) -> Self {
-        InterruptController { display }
-    }
-
-    pub fn init(&mut self) {
-        unsafe {
-            let pic1_cmd: u16 = 0x20;
-            let pic1_data: u16 = 0x21;
-            let pic2_cmd: u16 = 0xA0;
-            let pic2_data: u16 = 0xA1;
-
-            let mask1 = inb(pic1_data);
-            let mask2 = inb(pic2_data);
-
-            outb(pic1_cmd, 0x11);
-            wait_io();
-            outb(pic2_cmd, 0x11);
-            wait_io();
-
-            outb(pic1_data, 0x20);
-            wait_io();
-            outb(pic2_data, 0x28);
-            wait_io();
-
-            outb(pic1_data, 0x04);
-            wait_io();
-            outb(pic2_data, 0x02);
-            wait_io();
-
-            outb(pic1_data, 0x01);
-            wait_io();
-            outb(pic2_data, 0x01);
-            wait_io();
-
-            outb(pic1_data, mask1 & 0xFC);
-            wait_io();
-            outb(pic2_data, mask2);
-            wait_io();
-
-            macro_rules! set_isr {
-                ($n:expr, $f:ident) => { set_entry($n, $f as *const () as u64) }
-            }
-            set_isr!(0, isr_0);
-            set_isr!(1, isr_1);
-            set_isr!(2, isr_2);
-            set_isr!(3, isr_3);
-            set_isr!(4, isr_4);
-            set_isr!(5, isr_5);
-            set_isr!(6, isr_6);
-            set_isr!(7, isr_7);
-            set_isr!(8, isr_8);
-            set_isr!(9, isr_9);
-            set_isr!(10, isr_10);
-            set_isr!(11, isr_11);
-            set_isr!(12, isr_12);
-            set_isr!(13, isr_13);
-            set_isr!(14, isr_14);
-            set_isr!(15, isr_15);
-            set_isr!(16, isr_16);
-            set_isr!(17, isr_17);
-            set_isr!(18, isr_18);
-            set_isr!(19, isr_19);
-            set_isr!(20, isr_20);
-            set_isr!(32, isr_32);
-            set_isr!(33, isr_33);
-
-            load_idt();
-
-            self.display.writeln("IDT initialized");
+/// Fill `idt` with the standard exception + planckOS interrupt vectors.
+pub fn build_idt_into(idt: &mut [IdtEntry; 256]) {
+    unsafe {
+        macro_rules! set_isr {
+            ($n:expr, $f:ident) => { set_entry(idt, $n, $f as *const () as u64) }
         }
+        set_isr!(0, isr_0);
+        set_isr!(1, isr_1);
+        set_isr!(2, isr_2);
+        set_isr!(3, isr_3);
+        set_isr!(4, isr_4);
+        set_isr!(5, isr_5);
+        set_isr!(6, isr_6);
+        set_isr!(7, isr_7);
+        set_isr!(8, isr_8);
+        set_isr!(9, isr_9);
+        set_isr!(10, isr_10);
+        set_isr!(11, isr_11);
+        set_isr!(12, isr_12);
+        set_isr!(13, isr_13);
+        set_isr!(14, isr_14);
+        set_isr!(15, isr_15);
+        set_isr!(16, isr_16);
+        set_isr!(17, isr_17);
+        set_isr!(18, isr_18);
+        set_isr!(19, isr_19);
+        set_isr!(20, isr_20);
+        set_isr!(TIMER_VECTOR, isr_32);
+        set_isr!(KBD_VECTOR, isr_33);
+        set_isr!(IPI_VECTOR, isr_64);
     }
 }
 
-unsafe fn set_entry(num: u8, handler: u64) {
+/// Load the given IDT into the running core.
+pub fn load_idt_into(idt: &[IdtEntry; 256]) {
+    unsafe {
+        let idtr = Idtr {
+            limit: (core::mem::size_of::<IdtEntry>() * 256 - 1) as u16,
+            base: idt.as_ptr() as u64,
+        };
+        core::arch::asm!("lidt [{}]", in(reg) &idtr, options(readonly, nostack));
+    }
+}
+
+unsafe fn set_entry(idt: &mut [IdtEntry; 256], num: u8, handler: u64) {
     let idx = num as usize;
-    IDT[idx] = IdtEntry {
+    idt[idx] = IdtEntry {
         offset_low: handler as u16,
         selector: GDT_CODE64,
         ist: 0,
@@ -247,20 +225,23 @@ unsafe fn set_entry(num: u8, handler: u64) {
     };
 }
 
-unsafe fn load_idt() {
-    let idtr = Idtr {
-        limit: (core::mem::size_of::<IdtEntry>() * IDT_ENTRIES - 1) as u16,
-        base: core::ptr::addr_of!(IDT) as u64,
-    };
-    core::arch::asm!("lidt [{}]", in(reg) &idtr, options(readonly, nostack));
+// ── Interrupt controller (BSP entry point) ──────────────────────
+
+pub struct InterruptController {
+    display: VgaDisplay,
 }
 
-fn eoi(irq: u8) {
-    unsafe {
-        if irq >= 8 {
-            outb(0xA0, 0x20);
-        }
-        outb(0x20, 0x20);
+impl InterruptController {
+    pub const fn new(display: VgaDisplay) -> Self {
+        InterruptController { display }
+    }
+
+    /// Build and load the BSP IDT. The APIC timer is armed separately
+    /// via `apic::start_timer()` once `apic::init()` has completed.
+    pub fn init(&mut self) {
+        let idt = smp::cpu_idt_mut(0);
+        build_idt_into(idt);
+        load_idt_into(idt);
     }
 }
 
@@ -271,23 +252,48 @@ pub extern "C" fn idt_handler(int_no: u64, error_code: u64) {
     match int_no {
         32 => {
             TICK_COUNT.fetch_add(1, Ordering::Relaxed);
-            eoi(0);
+            apic::eoi();
         }
         33 => {
             input::irq1_handler();
-            eoi(1);
+            apic::eoi();
+        }
+        64 => {
+            smp::handle_ipi();
+            apic::eoi();
         }
         _ => {
-            let mut display = VgaDisplay::new();
-            display.write("EXC #");
-            print_hex(&mut display, int_no);
-            display.write(" ERR=");
-            print_hex(&mut display, error_code);
-            display.writeln(" -- HALT");
-            loop {
-                unsafe { core::arch::asm!("hlt", options(nomem, nostack)) }
-            }
+            fault(int_no, error_code);
         }
+    }
+}
+
+/// Fatal exception: log on serial; show on VGA from the BSP; halt the
+/// offending core (other cores keep running — isolation for the shim).
+fn fault(int_no: u64, error_code: u64) {
+    let cpu = apic::current_cpu_index();
+    serial::log_hex("KERN", "EXC", "exception #", int_no, "");
+    serial::log_hex("KERN", "EXC", "error code ", error_code, "");
+    if int_no == 14 {
+        let cr2: u64;
+        let cr3: u64;
+        unsafe {
+            core::arch::asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack));
+            core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nomem, nostack));
+        }
+        serial::log_hex("KERN", "EXC", "CR2 = ", cr2, "");
+        serial::log_hex("KERN", "EXC", "CR3 = ", cr3, "");
+    }
+    if cpu == 0 {
+        let mut display = VgaDisplay::new();
+        display.write("EXC #");
+        print_hex(&mut display, int_no);
+        display.write(" ERR=");
+        print_hex(&mut display, error_code);
+        display.writeln(" -- HALT");
+    }
+    loop {
+        unsafe { core::arch::asm!("hlt", options(nomem, nostack)) }
     }
 }
 
@@ -297,18 +303,4 @@ fn print_hex(display: &mut VgaDisplay, val: u64) {
         let nybble = ((val >> (i * 4)) & 0xF) as usize;
         display.putchar(hex[nybble]);
     }
-}
-
-unsafe fn outb(port: u16, val: u8) {
-    core::arch::asm!("out dx, al", in("dx") port, in("al") val, options(nomem, nostack));
-}
-
-unsafe fn inb(port: u16) -> u8 {
-    let val: u8;
-    core::arch::asm!("in al, dx", out("al") val, in("dx") port, options(nomem, nostack));
-    val
-}
-
-unsafe fn wait_io() {
-    core::arch::asm!("out dx, al", in("dx") 0x80u16, in("al") 0u8, options(nomem, nostack));
 }

@@ -37,10 +37,10 @@ start:
     LOG msg_timer
     LOG msg_banner
 
-    ; Load 32 sectors from CHS(0,0,2) to 0:0x1000
+    ; Load 40 sectors (full loader, incl. page tables) from CHS(0,0,2)
     LOG msg_loading
     mov ah, 0x02
-    mov al, 32
+    mov al, 40
     mov ch, 0
     mov cl, 2
     mov dh, 0
@@ -181,12 +181,12 @@ print_dec16:
 
 msg_banner:  db "[BOOT  ] [BANNER] planckOS", 0
 msg_timer:   db "[BOOT  ] [TIMER ] TSC ready", 0
-msg_loading: db "[BOOT  ] [DISK  ] reading stage 2 (32)", 0
+msg_loading: db "[BOOT  ] [DISK  ] reading stage 2 (40)", 0
 msg_stage2:  db "[BOOT  ] [HANDOF] stage 2 loaded", 0
 msg_fail:    db "[BOOT  ] [DISK  ] FAIL", 13, 10, 0
 msg_open:    db " (", 0
 msg_dot:     db ".", 0
-msg_ms:      db " ms)", 10, 0
+msg_ms:    db " ms)", 13, 10, 0
 
 drive:       db 0
 tsc_per_ms  equ 0x600

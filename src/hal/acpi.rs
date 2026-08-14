@@ -4,10 +4,10 @@ use core::mem;
 use crate::hal::serial;
 
 // ── Memory limit ────────────────────────────────────────────────
-// Page tables currently map 0-64MB. ACPI tables above this range
-// cannot be accessed yet.
+// The loader's page tables identity-map 0-1GB, so any ACPI table below
+// 1GB is reachable (QEMU places them near the top of installed RAM).
 
-const MAPPED_LIMIT: usize = 0x4000000; // 64MB
+const MAPPED_LIMIT: usize = 0x40000000; // 1GB
 
 fn is_mapped(addr: usize) -> bool {
     addr < MAPPED_LIMIT
@@ -107,6 +107,138 @@ struct Fadt {
     x_gpe1_blk: [u8; 12],
 }
 
+// ── MADT (Multiple APIC Description Table) ─────────────────────
+// Provides the local APIC base, IO-APIC address, and the APIC IDs of
+// every present CPU core — required for SMP bring-up and IPIs.
+
+pub const MAX_CPUS: usize = 8;
+
+#[derive(Clone, Copy)]
+pub struct MadtInfo {
+    pub lapic_base: u64,
+    pub io_apic_addr: u64,
+    pub io_apic_id: u8,
+    pub cpu_count: usize,
+    pub cpu_apic_ids: [u8; MAX_CPUS],
+    pub pcat_compat: bool,
+}
+
+pub static mut MADT: MadtInfo = MadtInfo {
+    lapic_base: 0xFEE00000,
+    io_apic_addr: 0,
+    io_apic_id: 0,
+    cpu_count: 0,
+    cpu_apic_ids: [0; MAX_CPUS],
+    pcat_compat: false,
+};
+
+/// Parse the MADT table. Fills the global `MADT` with the LAPIC base,
+/// IO-APIC base/ID and the APIC IDs of enabled cores.
+unsafe fn parse_madt(addr: *const SdtHeader) {
+    log("MADT found, parsing APIC entries");
+    let len = (*addr).length as usize;
+    let data = core::slice::from_raw_parts(addr as *const u8, len);
+    if len < 48 {
+        log("MADT too short");
+        return;
+    }
+
+    // Fixed fields: [0..36] header, [36..40] lapic addr, [40..44] flags.
+    let lapic_addr = u32::from_le_bytes([data[36], data[37], data[38], data[39]]);
+    let flags = u32::from_le_bytes([data[40], data[41], data[42], data[43]]);
+    MADT.lapic_base = lapic_addr as u64;
+    MADT.pcat_compat = flags & 1 != 0;
+
+    let mut off = 44;
+    while off + 2 <= len {
+        let etype = data[off];
+        let elen = data[off + 1] as usize;
+        if elen < 2 || off + elen > len {
+            break;
+        }
+        match etype {
+            0 => {
+                // Local APIC: proc_id u8, apic_id u8, flags u32
+                if elen >= 8 {
+                    let apic_id = data[off + 3];
+                    let ena = u32::from_le_bytes([
+                        data[off + 4],
+                        data[off + 5],
+                        data[off + 6],
+                        data[off + 7],
+                    ]);
+                    if ena & 1 != 0 && MADT.cpu_count < MAX_CPUS {
+                        MADT.cpu_apic_ids[MADT.cpu_count] = apic_id;
+                        MADT.cpu_count += 1;
+                    }
+                }
+            }
+            1 => {
+                // IO-APIC: io_apic_id u8, reserved u8, address u32, gsi_base u32
+                if elen >= 12 {
+                    MADT.io_apic_id = data[off + 2];
+                    MADT.io_apic_addr = u32::from_le_bytes([
+                        data[off + 4],
+                        data[off + 5],
+                        data[off + 6],
+                        data[off + 7],
+                    ]) as u64;
+                }
+            }
+            5 => {
+                // LAPIC address override: reserved u16, address u64
+                if elen >= 12 {
+                    let mut b = [0u8; 8];
+                    b.copy_from_slice(&data[off + 4..off + 12]);
+                    let a = u64::from_le_bytes(b);
+                    if a != 0 {
+                        MADT.lapic_base = a;
+                    }
+                }
+            }
+            _ => {}
+        }
+        off += elen;
+    }
+
+    log_hex("MADT: LAPIC base = ", MADT.lapic_base, "");
+    log_hex("MADT: IO-APIC @ ", MADT.io_apic_addr, "");
+    serial::log(
+        "ACPI",
+        "MADT",
+        format_cpus(MADT.cpu_count),
+    );
+}
+
+/// Format the detected core count into the serial scratch buffer.
+fn format_cpus(n: usize) -> &'static str {
+    let buf: &mut [u8; 224] = unsafe { &mut serial::FMT_BUF };
+    let mut i = 0;
+    for &b in b"cores detected: ".iter() {
+        buf[i] = b;
+        i += 1;
+    }
+    let mut tmp = [0u8; 20];
+    let mut j = 0;
+    let mut v = n as u64;
+    if v == 0 {
+        buf[i] = b'0';
+        i += 1;
+    } else {
+        while v > 0 {
+            tmp[j] = b'0' + (v % 10) as u8;
+            v /= 10;
+            j += 1;
+        }
+        while j > 0 {
+            j -= 1;
+            buf[i] = tmp[j];
+            i += 1;
+        }
+    }
+    core::str::from_utf8(&buf[..i]).unwrap_or("?")
+}
+
 // ── ACPI state ──────────────────────────────────────────────────
 
 static mut PM1A_CNT_BLK: u32 = 0;
@@ -160,7 +292,8 @@ pub fn init() {
         log("RSDP checksum OK");
 
         // Walk XSDT (preferred) or RSDT to find FADT
-        let sdt_addr = if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {
+        let is_xsdt = rsdp.revision >= 2 && rsdp.xsdt_addr != 0;
+        let sdt_addr = if is_xsdt {
             log("using XSDT (ACPI 2.0+)");
             rsdp.xsdt_addr as *const SdtHeader
         } else {
@@ -174,21 +307,31 @@ pub fn init() {
         }
 
         let sdt = &*sdt_addr;
-        let num_entries = (sdt.length as usize - mem::size_of::<SdtHeader>()) / 8;
+        // XSDT holds u64 entries, RSDT holds u32 entries.
+        let entry_size = if is_xsdt { 8 } else { 4 };
+        let num_entries = (sdt.length as usize - mem::size_of::<SdtHeader>()) / entry_size;
 
         log("walking SDT entries");
         let _ = num_entries;
 
         // Find FADT (signature "FACP")
-        let entries_ptr = (sdt_addr as *const u8).add(mem::size_of::<SdtHeader>()) as *const u64;
+        let entries_addr = (sdt_addr as *const u8).add(mem::size_of::<SdtHeader>()) as usize;
         let mut fadt_found = false;
         for i in 0..num_entries {
-            let entry_addr = ptr::read_unaligned(entries_ptr.add(i)) as *const SdtHeader;
+            let entry_addr = if is_xsdt {
+                ptr::read_unaligned((entries_addr + i * 8) as *const u64) as *const SdtHeader
+            } else {
+                ptr::read_unaligned((entries_addr + i * 4) as *const u32) as *const SdtHeader
+            };
             if entry_addr.is_null() || !is_mapped(entry_addr as usize) {
                 continue;
             }
             let entry = &*entry_addr;
             let sig = ptr::read_unaligned(&entry.signature as *const [u8; 4]);
+            if &sig == b"APIC" {
+                parse_madt(entry_addr);
+                continue;
+            }
             if &sig == b"FACP" {
                 let fadt = &*(entry_addr as *const Fadt);
                 PM1A_CNT_BLK = fadt.pm1a_cnt_blk;
@@ -208,7 +351,8 @@ pub fn init() {
                 } else if !dsdt_addr.is_null() {
                     log("DSDT outside mapped range");
                 }
-                break;
+                // Keep walking: other tables (e.g. MADT) follow FACP.
+                continue;
             }
         }
 

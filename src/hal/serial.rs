@@ -5,6 +5,9 @@
 
 const COM1: u16 = 0x3F8;
 
+/// Serialises cross-core access to the COM1 port.
+static SERIAL_LOCK: super::memory::SpinLock = super::memory::SpinLock::new();
+
 /// Initialise the serial port (115200 baud, 8N1).
 pub fn serial_init() {
     unsafe {
@@ -26,10 +29,12 @@ pub fn serial_init() {
 
 /// Write a single byte to the serial port, blocking until ready.
 pub fn serial_write_byte(byte: u8) {
+    SERIAL_LOCK.lock();
     unsafe {
         while (inb(COM1 + 5) & 0x20) == 0 {}
         outb(COM1, byte);
     }
+    unsafe { SERIAL_LOCK.unlock() }
 }
 
 /// Write a string to the serial port.
@@ -40,6 +45,7 @@ pub fn serial_write_str(s: &str) {
 }
 
 pub fn serial_debug(msg: &[u8]) {
+    SERIAL_LOCK.lock();
     for &c in msg {
         if c == 0 { break; }
         unsafe {
@@ -47,6 +53,7 @@ pub fn serial_debug(msg: &[u8]) {
             outb(COM1, c);
         }
     }
+    unsafe { SERIAL_LOCK.unlock() }
 }
 
 // ── Boot logging (unified [PART] [SUB] format with per-phase timing) ──
@@ -98,6 +105,20 @@ pub fn log_ms(part: &str, sub: &str, msg: &str, ms10: u64) {
     let msg = core::str::from_utf8(&msg_copy[..ml]).unwrap_or("?");
     let buf: &mut [u8; 224] = unsafe { &mut LOG_BUF };
     let mut i = 0;
+    let cpu = super::apic::current_cpu_index() as u64;
+    i = put_str(buf, i, "[CPU");
+    i = put_dec(buf, i, cpu);
+    // Pad the "CPU<n>" tag to 6 wide, matching the PART/SUB fields.
+    let mut n = cpu;
+    let mut ndigits = 1;
+    while n >= 10 {
+        n /= 10;
+        ndigits += 1;
+    }
+    for _ in (3 + ndigits)..6 {
+        i = put(buf, i, b' ');
+    }
+    i = put_str(buf, i, "] ");
     i = put(buf, i, b'[');
     i = put_pad(buf, i, part, 6);
     i = put(buf, i, b']');

@@ -73,9 +73,9 @@ pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, _args: &[&str]) 
     display.write(fmt_num(total_mb, &mut mb_buf));
     display.writeln(" MB usable");
 
-    // Uptime
+    // Uptime (APIC timer ticks at ~1000 Hz)
     let ticks = TICK_COUNT.load(Ordering::Relaxed);
-    let seconds = ticks / 18;
+    let seconds = ticks / 1000;
     let mins = seconds / 60;
     let secs = seconds % 60;
     let mut mins_buf = [0u8; 16];

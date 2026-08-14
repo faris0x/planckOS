@@ -9,20 +9,40 @@ use super::serial;
 pub const HEAP_BASE: usize = 0x200000;
 pub const HEAP_END: usize = 0x600000;
 
-/// Minimal spinlock — single CPU today, SMP-proof by design. No IRQ path
-/// allocates, so plain spinlocking (without interrupt saving) is sufficient.
+/// SMP-safe spinlock. `lock()` saves the local interrupt flag, disables
+/// interrupts, then spins on the atomic flag; `unlock()` restores the saved
+/// flag. A critical section can never be preempted by an interrupt handler
+/// on the same core, and nesting behaves correctly because each lock saves
+/// the IF state it observed. Interrupt handlers must NOT take any spinlock
+/// (standard IRQ-save discipline).
 pub struct SpinLock {
     flag: AtomicBool,
+    saved_if: UnsafeCell<bool>,
 }
+
+// Safety: access to `saved_if` is confined to the lock holder; the flag
+// itself is an atomic. This is the standard `unsafe impl Sync` for a
+// self-arbitrating spinlock.
+unsafe impl Sync for SpinLock {}
 
 impl SpinLock {
     pub const fn new() -> Self {
         SpinLock {
             flag: AtomicBool::new(false),
+            saved_if: UnsafeCell::new(true),
         }
     }
 
     pub fn lock(&self) {
+        let flags: u64;
+        unsafe {
+            core::arch::asm!("pushfq", "pop {}", out(reg) flags, options(nomem, nostack));
+        }
+        let if_set = flags & (1 << 9) != 0;
+        unsafe {
+            *self.saved_if.get() = if_set;
+            core::arch::asm!("cli", options(nomem, nostack));
+        }
         while self
             .flag
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -34,6 +54,9 @@ impl SpinLock {
 
     pub unsafe fn unlock(&self) {
         self.flag.store(false, Ordering::Release);
+        if *self.saved_if.get() {
+            core::arch::asm!("sti", options(nomem, nostack));
+        }
     }
 }
 
@@ -65,14 +88,16 @@ unsafe impl GlobalAlloc for LockedHeap {
             core.oom_count + core.align_fail_count
         };
         let result = (*self.core.get()).alloc(layout);
-        let after = {
+        let failed = {
             let core = &*self.core.get();
-            core.oom_count + core.align_fail_count
+            core.oom_count + core.align_fail_count != before
         };
-        if after != before {
+        self.lock.unlock();
+        // Log outside the heap lock: serial takes its own lock, and holding
+        // the heap lock across it could deadlock another core.
+        if failed {
             serial::log("KERN", "HEAP", "WARNING: allocation failed");
         }
-        self.lock.unlock();
         result
     }
 
@@ -83,14 +108,14 @@ unsafe impl GlobalAlloc for LockedHeap {
             core.bad_free_count + core.double_free_count
         };
         (*self.core.get()).dealloc(ptr);
-        let after = {
+        let failed = {
             let core = &*self.core.get();
-            core.bad_free_count + core.double_free_count
+            core.bad_free_count + core.double_free_count != before
         };
-        if after != before {
+        self.lock.unlock();
+        if failed {
             serial::log("KERN", "HEAP", "WARNING: free violation detected");
         }
-        self.lock.unlock();
     }
 }
 

@@ -10,10 +10,13 @@ pub struct MemRegion {
 
 pub const REGIONS: &[MemRegion] = &[
     MemRegion { start: 0x000000, len: 0x001000, typ: 2 }, // IVT/BDA
-    MemRegion { start: 0x001000, len: 0x0FF000, typ: 1 }, // Loader + usable (0x1000 – 0xFFFFF)
-    MemRegion { start: 0x100000, len: 0x100000, typ: 2 }, // Kernel + BSS (0x100000 – 0x1FFFFF)
-    MemRegion { start: 0x200000, len: 0x200000, typ: 1 }, // Heap pool + gap
-    MemRegion { start: 0x400000, len: 0x7C00000, typ: 1 }, // Free usable (~124MB)
+    // Loader + page tables (0x1000–0x6000), AP trampoline (0x8000),
+    // BSP stack (0x90000), EBDA/VGA (0xA0000+) — all kernel-owned.
+    MemRegion { start: 0x001000, len: 0x09F000, typ: 2 },
+    MemRegion { start: 0x0A0000, len: 0x060000, typ: 2 }, // VGA/BIOS ROM
+    MemRegion { start: 0x100000, len: 0x100000, typ: 2 }, // Kernel + BSS
+    MemRegion { start: 0x200000, len: 0x400000, typ: 2 }, // Kernel heap
+    MemRegion { start: 0x600000, len: 0x7A00000, typ: 1 }, // Free usable (~122MB)
 ];
 
 /// Return total usable memory in bytes.

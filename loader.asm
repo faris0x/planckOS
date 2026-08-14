@@ -4,8 +4,8 @@
 KERNEL_LBA equ 65
 ; Must match kernel_bin size after objcopy
 ; Update this when kernel size changes
-KERNEL_SIZE equ 192576
-KERNEL_SECTORS equ 377
+KERNEL_SIZE equ 197048
+KERNEL_SECTORS equ 385
 KERNEL_BUF equ 0x10000
 
 %macro LOG 1
@@ -702,13 +702,13 @@ msg_cpu:    db "[LOADER] [CPU   ] vendor: ", 0
 msg_timer:  db "[LOADER] [TIMER ] TSC calibrated by boot sector", 0
 msg_a20:    db "[LOADER] [A20   ] enabling via 8042 controller", 0
 msg_a20_ok: db "[LOADER] [A20   ] enabled", 0
-msg_loading: db "[LOADER] [DISK  ] kernel: 369 sectors @ LBA 65, 188,464 B", 0
+msg_loading: db "[LOADER] [DISK  ] kernel: 385 sectors @ LBA 65, 197,048 B", 0
 msg_loaded: db "[LOADER] [DISK  ] loaded to 0x10000", 0
 msg_vbe:    db "[LOADER] [VBE   ] probing VESA modes", 0
 msg_vbe_ok: db "[LOADER] [VBE   ] 1920x1080 @32bpp LFB", 0
 msg_vbe_fail: db "[LOADER] [VBE   ] unavailable - VGA text fallback", 0
 msg_pmode:  db "[LOADER] [CPU   ] switching to protected mode", 0
-msg_copy:   db "[LOADER] [KERNEL] copying 188,464 B to 0x100000", 0
+msg_copy:   db "[LOADER] [KERNEL] copying 197,048 B to 0x100000", 0
 msg_copied: db "[LOADER] [KERNEL] copied", 0
 msg_paging: db "[LOADER] [MMU   ] page tables: 0-1GB identity + 3-4GB MMIO", 0
 msg_long:   db "[LOADER] [CPU   ] PAE + long mode active", 0
