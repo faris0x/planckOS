@@ -1,3 +1,6 @@
+; Copyright (c) 2026 Faris Alfarhan
+; SPDX-License-Identifier: GPL-3.0-only
+
 [org 0x7C00]
 [bits 16]
 

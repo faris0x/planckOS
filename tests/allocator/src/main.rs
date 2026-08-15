@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 //! planckOS heap allocator — host-side exhaustive test harness.
 //!
 //! Compiles the EXACT allocator source used by the kernel (`src/hal/heap.rs`,

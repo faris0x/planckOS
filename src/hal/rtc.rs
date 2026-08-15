@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 /// CMOS RTC driver — reads date and time from the real-time clock.
 ///
 /// Ports:

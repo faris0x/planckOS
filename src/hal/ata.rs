@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 /// ATA PIO driver — reads and writes sectors on IDE channels via port I/O.
 ///
 /// Primary channel:   I/O base 0x1F0, control 0x3F6

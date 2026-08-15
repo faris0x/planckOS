@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 // planckOS heap allocator core.
 //
 // Boundary-tag (dlmalloc-style) allocator over a flat implicit free list:

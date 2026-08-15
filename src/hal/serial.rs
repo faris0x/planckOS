@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 /// Serial port driver (COM1, 0x3F8) for debug output.
 ///
 /// Used during boot to confirm stage progression before the VGA

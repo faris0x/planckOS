@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 mod builtins;
 
 use crate::hal::input::Ps2Keyboard;

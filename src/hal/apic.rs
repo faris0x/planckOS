@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 // ── Advanced Programmable Interrupt Controller (xAPIC) ──────────
 //
 // Local APIC (MMIO at LAPIC_BASE) + IO-APIC + local APIC timer + IPIs.

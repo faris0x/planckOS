@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 /// Hardcoded memory map for planckOS running in QEMU with 128MB RAM.
 /// In a real OS, this would come from the BIOS e820 call during boot.
 

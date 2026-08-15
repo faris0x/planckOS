@@ -1,3 +1,6 @@
+; Copyright (c) 2026 Faris Alfarhan
+; SPDX-License-Identifier: GPL-3.0-only
+
 ; AP startup trampoline. Assembled with NASM to a flat binary and embedded
 ; into the kernel (see build.rs / smp.rs). At runtime smp.rs copies it to
 ; physical 0x8000 and sends INIT/SIPI so a secondary core executes the

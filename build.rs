@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 fn main() {
     println!("cargo:rerun-if-changed=src/hal/trampoline.asm");
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 // ── SMP: secondary-core bring-up (INIT-SIPI + per-core context) ──
 
 use alloc::alloc::{alloc, Layout};

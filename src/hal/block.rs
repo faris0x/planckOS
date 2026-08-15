@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 /// Block device abstraction — the FAT32 driver operates on any
 /// implementation of this trait, not on ATA ports directly.
 

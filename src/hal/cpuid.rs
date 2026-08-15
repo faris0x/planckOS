@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Faris Alfarhan
+// SPDX-License-Identifier: GPL-3.0-only
+
 /// CPUID driver — queries processor vendor, model, and features.
 
 use core::arch::asm;
