@@ -1,11 +1,14 @@
 [package]
 name = "planckos"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "GPL-3.0-only"
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ["cfg(applet_sysinfo)", "cfg(applet_datetime)"] }
+
+[profile.dev]
+panic = "abort"
 
 [profile.release]
 lto = true

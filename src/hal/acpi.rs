@@ -438,21 +438,34 @@ unsafe fn parse_s5(dsdt_addr: *const u8) {
 
 /// Shutdown the system using ACPI.
 pub fn shutdown() {
-    unsafe {
-        if PM1A_CNT_BLK != 0 && ACPI_READY {
-            let slp_typa = S5_SLP_TYPa as u16;
-            let val = (slp_typa << 2) | (1 << 13) | 0; // SLP_TYPa | SLP_EN (bit 13)
-            // Write 32-bit value to PM1a_CNT port
-            let port = PM1A_CNT_BLK as u16;
-            outb(port, (val & 0xFF) as u8);
-            outb(port + 1, ((val >> 8) & 0xFF) as u8);
+    log("starting shutdown");
+    let ready = unsafe { PM1A_CNT_BLK != 0 && ACPI_READY };
+
+    if ready {
+        let port = unsafe { PM1A_CNT_BLK as u16 };
+        let slp_typa = unsafe { S5_SLP_TYPa as u16 };
+        let value = (slp_typa << 2) | (1 << 13); // SLP_TYPa | SLP_EN
+        log_hex("S5 PM1a_CNT = ", port as u64, "");
+        log_hex("S5 SLP_TYP = ", slp_typa as u64, "");
+        log("writing ACPI S5");
+        serial::flush();
+        unsafe {
+            outb(port, (value & 0xFF) as u8);
+            outb(port + 1, ((value >> 8) & 0xFF) as u8);
         }
+    } else {
+        log("ACPI S5 unavailable");
+        serial::flush();
+    }
 
-        // QEMU fallback: try isa-debug-exit port
-        outb(0x501, 0x31);
+    log("trying isa-debug-exit");
+    serial::flush();
+    unsafe { outb(0x501, 0x31) };
 
-        // Last resort: halt
-        loop {
+    log("halted");
+    serial::flush();
+    loop {
+        unsafe {
             core::arch::asm!("cli; hlt", options(nomem, nostack));
         }
     }

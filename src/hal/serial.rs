@@ -47,6 +47,28 @@ pub fn serial_write_str(s: &str) {
     }
 }
 
+/// Wait until the UART transmit shift register is empty.
+pub fn flush() {
+    SERIAL_LOCK.lock();
+    unsafe {
+        while (inb(COM1 + 5) & 0x40) == 0 {}
+    }
+    unsafe { SERIAL_LOCK.unlock() }
+}
+
+/// Busy-wait for a number of milliseconds using the calibrated TSC.
+pub fn wait_ms(ms: u64) {
+    let per_ms = unsafe { TSC_PER_MS };
+    if per_ms == 0 {
+        return;
+    }
+    let start = rdtsc();
+    let ticks = per_ms.saturating_mul(ms);
+    while rdtsc().wrapping_sub(start) < ticks {
+        core::hint::spin_loop();
+    }
+}
+
 pub fn serial_debug(msg: &[u8]) {
     SERIAL_LOCK.lock();
     for &c in msg {
@@ -72,6 +94,14 @@ pub static mut LOG_BUF: [u8; 224] = [0; 224];
 /// LOG_BUF so log_ms can copy from it without overlap).
 pub static mut FMT_BUF: [u8; 224] = [0; 224];
 
+const LOG_RING_LINES: usize = 64;
+const LOG_LINE_LEN: usize = 192;
+static mut LOG_RING: [[u8; LOG_LINE_LEN]; LOG_RING_LINES] = [[0; LOG_LINE_LEN]; LOG_RING_LINES];
+static mut LOG_LENS: [usize; LOG_RING_LINES] = [0; LOG_RING_LINES];
+static mut LOG_NEXT: usize = 0;
+static mut LOG_COUNT: usize = 0;
+static LOG_LOCK: super::memory::SpinLock = super::memory::SpinLock::new();
+
 /// Read the TSC (cycle counter).
 pub fn rdtsc() -> u64 {
     let lo: u32;
@@ -96,6 +126,50 @@ pub fn ms10_since(start: u64) -> u64 {
     let now = rdtsc();
     let per_ms = unsafe { TSC_PER_MS };
     (now.wrapping_sub(start) as u128 * 10 / per_ms as u128) as u64
+}
+
+fn record_log(line: &[u8]) {
+    let mut len = line.len();
+    while len > 0 && matches!(line[len - 1], b'\r' | b'\n') {
+        len -= 1;
+    }
+    if len == 0 {
+        return;
+    }
+    let copy_len = len.min(LOG_LINE_LEN);
+    LOG_LOCK.lock();
+    unsafe {
+        let index = LOG_NEXT;
+        LOG_RING[index][..copy_len].copy_from_slice(&line[..copy_len]);
+        LOG_LENS[index] = copy_len;
+        LOG_NEXT = (index + 1) % LOG_RING_LINES;
+        if LOG_COUNT < LOG_RING_LINES {
+            LOG_COUNT += 1;
+        }
+    }
+    unsafe { LOG_LOCK.unlock() }
+}
+
+/// Print the recorded kernel log lines to a display.
+pub fn dump_log(display: &mut dyn super::Display) {
+    LOG_LOCK.lock();
+    let count = unsafe { LOG_COUNT };
+    if count == 0 {
+        display.writeln("dmesg: no log entries");
+        unsafe { LOG_LOCK.unlock() }
+        return;
+    }
+    let next = unsafe { LOG_NEXT };
+    let start = (next + LOG_RING_LINES - count) % LOG_RING_LINES;
+    for offset in 0..count {
+        let index = (start + offset) % LOG_RING_LINES;
+        let len = unsafe { LOG_LENS[index] };
+        let line = unsafe { &LOG_RING[index][..len] };
+        if let Ok(text) = core::str::from_utf8(line) {
+            display.writeln(text);
+        }
+    }
+    unsafe { LOG_LOCK.unlock() }
 }
 
 /// Log a line with an explicitly measured elapsed time (deciseconds).
@@ -138,6 +212,7 @@ pub fn log_ms(part: &str, sub: &str, msg: &str, ms10: u64) {
     i = put_dec(buf, i, ms10 % 10);
     i = put_str(buf, i, " ms)\r\n");
     buf[i] = 0;
+    record_log(&buf[..i]);
     serial_debug(&buf[..i]);
 }
 

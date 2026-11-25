@@ -21,6 +21,9 @@ pub fn print_help(display: &mut dyn Display, registry: &AppletRegistry) {
     print_cmd(display, "cls", "Clears screen");
     print_cmd(display, "banner", "Shows welcome banner");
     print_cmd(display, "history", "Shows command history");
+    print_cmd(display, "dmesg", "Shows the kernel boot log");
+    print_cmd(display, "cd", "Changes the working directory");
+    print_cmd(display, "pwd", "Prints the working directory");
     print_cmd(display, "ls", "List directory contents");
     print_cmd(display, "out", "Display file contents");
     print_cmd(display, "mk", "Create files and directories");

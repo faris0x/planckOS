@@ -3,7 +3,9 @@
 
 mod builtins;
 
+use crate::hal::fat32;
 use crate::hal::input::Ps2Keyboard;
+use crate::hal::serial;
 use crate::hal::{Display, DisplayBackend, Input};
 use crate::applets::AppletRegistry;
 use crate::applets::ls;
@@ -12,7 +14,6 @@ use crate::applets::mk;
 use crate::applets::rm;
 use crate::applets::cp;
 
-const PROMPT: &str = "$ ";
 const MAX_CMD: usize = 256;
 const HISTORY_SIZE: usize = 64;
 
@@ -25,6 +26,8 @@ pub struct Shell {
     history_lens: [usize; HISTORY_SIZE],
     history_count: usize,
     history_cursor: isize,
+    prompt_buf: [u8; 256],
+    prompt_len: usize,
 }
 
 impl Shell {
@@ -33,7 +36,7 @@ impl Shell {
         input: Ps2Keyboard,
         registry: AppletRegistry,
     ) -> Self {
-        Shell {
+        let mut shell = Shell {
             display,
             input,
             registry,
@@ -42,6 +45,46 @@ impl Shell {
             history_lens: [0; HISTORY_SIZE],
             history_count: 0,
             history_cursor: -1,
+            prompt_buf: [0; 256],
+            prompt_len: 0,
+        };
+        shell.refresh_prompt();
+        shell
+    }
+
+    fn refresh_prompt(&mut self) {
+        let mut cwd = [0u8; 256];
+        let len = match fat32::f_getcwd(&mut cwd) {
+            Ok(()) => cwd.iter().position(|&b| b == 0).unwrap_or(cwd.len()),
+            Err(_) => 0,
+        };
+        let cwd = if len == 0 { b"/" as &[u8] } else { &cwd[..len] };
+        let limit = (self.display.cols() as usize).saturating_sub(12).max(4).min(200);
+        let ellipsis = cwd.len() > limit;
+        let tail_len = if ellipsis { limit - 3 } else { cwd.len() };
+        let tail_start = cwd.len() - tail_len;
+
+        let mut out = [0u8; 256];
+        let mut n = 0;
+        if ellipsis {
+            out[..3].copy_from_slice(b"...");
+            n = 3;
+        }
+        out[n..n + tail_len].copy_from_slice(&cwd[tail_start..]);
+        n += tail_len;
+        out[n..n + 3].copy_from_slice(b" $ ");
+        n += 3;
+
+        self.prompt_buf = out;
+        self.prompt_len = n;
+    }
+
+    fn write_prompt(&mut self) {
+        let len = self.prompt_len;
+        let mut buf = [0u8; 256];
+        buf[..len].copy_from_slice(&self.prompt_buf[..len]);
+        if let Ok(text) = core::str::from_utf8(&buf[..len]) {
+            self.display.write(text);
         }
     }
 
@@ -73,15 +116,15 @@ impl Shell {
     }
 
     fn redraw_input(&mut self, buf: &[u8], len: usize) {
-        let prompt_len = 2;
+        let prompt_len = self.prompt_len;
         let line_clear = self.display.cols().saturating_sub(prompt_len).saturating_sub(1);
         self.display.putchar(0x0D);
-        self.display.write(PROMPT);
+        self.write_prompt();
         for _ in 0..line_clear {
             self.display.putchar(b' ');
         }
         self.display.putchar(0x0D);
-        self.display.write(PROMPT);
+        self.write_prompt();
         for &b in &buf[..len] {
             self.display.putchar(b);
         }
@@ -93,7 +136,8 @@ impl Shell {
 
     pub fn run(mut self) -> ! {
         loop {
-            self.display.write(PROMPT);
+            self.refresh_prompt();
+            self.write_prompt();
             self.display.show_cursor();
             let mut buf = [0u8; MAX_CMD];
             let mut len = 0usize;
@@ -173,7 +217,7 @@ impl Shell {
                     }
                     // Printable characters
             c if c >= 0x20 && c < 0x7F => {
-                let max_len = self.display.cols().saturating_sub(2);
+                let max_len = self.display.cols().saturating_sub(self.prompt_len).saturating_sub(1);
                 if len < max_len {
                     // Shift characters right to make room
                     for i in (self.cursor_pos..len).rev() {
@@ -286,7 +330,7 @@ impl Shell {
             }
             b"banner" => {
                 self.display.clear();
-                self.display.writeln("planckOS v0.1 - x86-64 Rust");
+                self.display.writeln("planckOS v0.2 - x86-64 Rust");
                 self.display.writeln("Copyright (C) 2026 Faris Alfarhan");
                 self.display.writeln("Licensed GPLv3");
                 true
@@ -321,9 +365,39 @@ impl Shell {
                 }
                 true
             }
+            b"dmesg" => {
+                serial::dump_log(&mut self.display);
+                true
+            }
             b"shutdown" => {
                 self.display.writeln("Shutting down...");
+                serial::log("KERN", "POWER", "shutdown requested by shell");
+                serial::flush();
+                serial::wait_ms(250);
                 crate::hal::acpi::shutdown();
+                true
+            }
+            b"cd" => {
+                let target = applet_args.first().copied().unwrap_or("/");
+                match fat32::f_chdir(target) {
+                    Ok(()) => {
+                        self.refresh_prompt();
+                    }
+                    Err(_) => {
+                        self.display.write("cd: cannot enter ");
+                        self.display.writeln(target);
+                    }
+                }
+                true
+            }
+            b"pwd" => {
+                let mut cwd = [0u8; 256];
+                if fat32::f_getcwd(&mut cwd).is_ok() {
+                    let len = cwd.iter().position(|&b| b == 0).unwrap_or(0);
+                    if let Ok(path) = core::str::from_utf8(&cwd[..len]) {
+                        self.display.writeln(path);
+                    }
+                }
                 true
             }
             b"ls" => { ls::run(&mut self.display, &mut self.input, applet_args); true }

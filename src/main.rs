@@ -55,7 +55,7 @@ pub extern "C" fn _start() -> ! {
     let boot_info = unsafe { read_boot_info() };
     serial::bootlog_init(boot_info.tsc_per_ms);
 
-    serial::log("KERN", "ENTRY", "planckOS v0.1 x86-64 kernel @ 0x100000");
+    serial::log("KERN", "ENTRY", "planckOS v0.2 x86-64 kernel @ 0x100000");
     serial::log_hex("KERN", "BOOTI", "VBE available: ", boot_info.vbe_available as u64, "");
     serial::log_hex("KERN", "BOOTI", "framebuffer @ ", boot_info.fb_addr, "");
     serial::log(
@@ -82,7 +82,7 @@ pub extern "C" fn _start() -> ! {
         DisplayBackend::Vga(vga)
     };
 
-    display.writeln("planckOS v0.1 - x86-64 Rust");
+    display.writeln("planckOS v0.2 - x86-64 Rust");
     display.writeln("Copyright (C) 2026 Faris Alfarhan");
     display.writeln("Licensed GPLv3");
 

@@ -21,10 +21,10 @@ use core::sync::atomic::Ordering;
 pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, _args: &[&str]) {
     let cpu = cpuid::query();
 
-    display.writeln("planckOS v0.1 - System Information");
+    display.writeln("planckOS v0.2 - System Information");
     display.writeln("");
 
-    display.write("Kernel:       planckOS v0.1 (x86-64, Rust)\r\n");
+    display.write("Kernel:       planckOS v0.2 (x86-64, Rust)\r\n");
 
     display.write("CPU Vendor:   ");
     display.writeln(cpuid::vendor_str(&cpu));

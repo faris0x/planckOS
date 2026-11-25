@@ -166,7 +166,7 @@ pub fn f_mount(dev: &'static dyn BlockDevice) -> FResult<()> {
         });
     }
 
-    cwd_init();
+    cwd_init(root_cluster);
 
     Ok(())
 }
@@ -882,11 +882,10 @@ pub fn f_stat(path: &str) -> FResult<FileInfo> {
     with_vol(|vol| {
         let (parent, name) = resolve_path(vol, path)?;
         if name.is_empty() {
-            // Root directory
             return Ok(FileInfo {
                 size: 0,
                 attributes: ATTR_DIRECTORY,
-                start_cluster: vol.root_cluster,
+                start_cluster: parent,
                 write_time: 0,
                 write_date: 0,
             });
@@ -1140,7 +1139,7 @@ fn match_pattern_inner(name: &[u8; 13], ni: usize, pat: &[u8], pi: usize) -> boo
 
 pub fn f_opendir(path: &str) -> FResult<Dir> {
     with_vol(|vol| {
-        let (dir_cluster, _) = resolve_path(vol, path)?;
+        let dir_cluster = resolve_dir(vol, path)?;
         Ok(Dir {
             start_cluster: dir_cluster,
             current_cluster: dir_cluster,
@@ -1585,106 +1584,194 @@ pub fn f_setlabel(label: &[u8]) -> FResult<()> {
 static mut CWD_CLUSTER: u32 = 0;
 static mut CWD_PATH: [u8; 256] = [0u8; 256];
 
-fn cwd_init() {
+fn cwd_init(root_cluster: u32) {
     unsafe {
-        CWD_CLUSTER = 2; // root cluster
+        CWD_CLUSTER = root_cluster;
         CWD_PATH = [0u8; 256];
         CWD_PATH[0] = b'/';
     }
 }
 
+fn current_dir_cluster(vol: &FatVolume) -> u32 {
+    let cluster = unsafe { CWD_CLUSTER };
+    if cluster >= 2 { cluster } else { vol.root_cluster }
+}
+
+/// Build the canonical absolute path for `path`, relative to `CWD_PATH`.
+fn build_cwd_path(path: &str, out: &mut [u8; 256]) -> FResult<()> {
+    let mut base = [0u8; 256];
+    let mut len;
+
+    if path.starts_with('/') {
+        base[0] = b'/';
+        len = 1;
+    } else {
+        let cwd = unsafe { CWD_PATH };
+        len = cwd.iter().position(|&b| b == 0).unwrap_or(0);
+        if len == 0 {
+            base[0] = b'/';
+            len = 1;
+        } else {
+            base[..len].copy_from_slice(&cwd[..len]);
+        }
+    }
+
+    for component in path.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        if component == ".." {
+            while len > 1 && base[len - 1] != b'/' {
+                len -= 1;
+            }
+            if len > 1 {
+                len -= 1;
+            }
+            continue;
+        }
+
+        let bytes = component.as_bytes();
+        if len > 1 && base[len - 1] != b'/' {
+            if len >= base.len() {
+                return Err(FError::Invalid);
+            }
+            base[len] = b'/';
+            len += 1;
+        }
+        if len + bytes.len() >= base.len() {
+            return Err(FError::Invalid);
+        }
+        base[len..len + bytes.len()].copy_from_slice(bytes);
+        len += bytes.len();
+    }
+
+    if len == 0 {
+        base[0] = b'/';
+        len = 1;
+    }
+
+    out.fill(0);
+    out[..len].copy_from_slice(&base[..len]);
+    Ok(())
+}
+
 pub fn f_chdir(path: &str) -> FResult<()> {
     with_vol(|vol| {
-        let (cluster, _) = resolve_path(vol, path)?;
+        let target = resolve_dir(vol, path)?;
+        let mut canonical = [0u8; 256];
+        build_cwd_path(path, &mut canonical)?;
         unsafe {
-            CWD_CLUSTER = cluster;
-            // Build canonical path
-            CWD_PATH = [0u8; 256];
-            if path.starts_with('/') {
-                let bytes = path.as_bytes();
-                let len = bytes.len().min(255);
-                CWD_PATH[..len].copy_from_slice(&bytes[..len]);
-            } else {
-            // Relative path — append to current CWD
-            let cwd = &CWD_PATH;
-                let cwd_len = cwd.iter().position(|&b| b == 0).unwrap_or(0);
-                if cwd_len > 0 && cwd[cwd_len - 1] != b'/' {
-                    CWD_PATH[cwd_len] = b'/';
-                    let bytes = path.as_bytes();
-                    let len = bytes.len().min(255 - cwd_len - 1);
-                    CWD_PATH[cwd_len + 1..cwd_len + 1 + len].copy_from_slice(&bytes[..len]);
-                } else {
-                    let bytes = path.as_bytes();
-                    let len = bytes.len().min(255 - cwd_len);
-                    CWD_PATH[cwd_len..cwd_len + len].copy_from_slice(&bytes[..len]);
-                }
-            }
+            CWD_CLUSTER = target;
+            CWD_PATH = canonical;
         }
         Ok(())
     })
 }
 
 pub fn f_getcwd(buf: &mut [u8]) -> FResult<()> {
-    unsafe {
-        let cwd = &CWD_PATH;
-        let len = cwd.iter().position(|&b| b == 0).unwrap_or(0);
-        if len > 0 {
-            let copy_len = len.min(buf.len());
-            buf[..copy_len].copy_from_slice(&cwd[..copy_len]);
-            if copy_len < buf.len() {
-                buf[copy_len] = 0;
-            }
-        } else {
-            buf[0] = b'/';
-            if buf.len() > 1 {
-                buf[1] = 0;
-            }
+    let cwd = unsafe { CWD_PATH };
+    let len = cwd.iter().position(|&b| b == 0).unwrap_or(0);
+    if len > 0 {
+        let copy_len = len.min(buf.len());
+        buf[..copy_len].copy_from_slice(&cwd[..copy_len]);
+        if copy_len < buf.len() {
+            buf[copy_len] = 0;
         }
-        Ok(())
+    } else {
+        buf[0] = b'/';
+        if buf.len() > 1 {
+            buf[1] = 0;
+        }
     }
+    Ok(())
 }
 
 // ── Path resolution ──────────────────────────────────────────
 
-/// Walk a path like "/dir1/dir2/file" and return the parent directory
-/// cluster and the final name component.
+fn directory_cluster_from_entry(
+    vol: &mut FatVolume,
+    dir_cluster: u32,
+    entry_idx: u16,
+) -> FResult<u32> {
+    let entry = vol.read_entry_data(dir_cluster, entry_idx)?;
+    if entry[0x0B] & ATTR_DIRECTORY == 0 {
+        return Err(FError::NoPath);
+    }
+    Ok(u32::from_le_bytes([
+        entry[0x1A], entry[0x1B], entry[0x14], entry[0x15],
+    ]))
+}
+
+fn parent_cluster(vol: &mut FatVolume, cluster: u32) -> FResult<u32> {
+    if cluster == vol.root_cluster {
+        return Ok(cluster);
+    }
+    let (dir_cluster, entry_idx) = vol
+        .find_entry_in_dir(cluster, b"..")?
+        .ok_or(FError::NoPath)?;
+    let parent = directory_cluster_from_entry(vol, dir_cluster, entry_idx)?;
+    if parent >= 2 { Ok(parent) } else { Ok(vol.root_cluster) }
+}
+
+fn resolve_dir(vol: &mut FatVolume, path: &str) -> FResult<u32> {
+    let (parent, name) = resolve_path(vol, path)?;
+    if name.is_empty() {
+        return Ok(parent);
+    }
+    let (dir_cluster, entry_idx) = vol
+        .find_entry_in_dir(parent, name.as_bytes())?
+        .ok_or(FError::NoPath)?;
+    let cluster = directory_cluster_from_entry(vol, dir_cluster, entry_idx)?;
+    if cluster >= 2 { Ok(cluster) } else { Err(FError::NoPath) }
+}
+
+/// Walk a path and return the parent directory cluster and final name.
+///
+/// Relative paths start at the current directory. Absolute paths start at the
+/// root. A final `.` or `..` returns an empty name and the resolved cluster.
 fn resolve_path<'a>(vol: &mut FatVolume, path: &'a str) -> FResult<(u32, &'a str)> {
+    let absolute = path.starts_with('/');
+    let mut current_cluster = if absolute {
+        vol.root_cluster
+    } else {
+        current_dir_cluster(vol)
+    };
+
     let path = path.trim_start_matches('/');
     if path.is_empty() {
-        return Ok((vol.root_cluster, ""));
+        return Ok((current_cluster, ""));
     }
 
-    let mut current_cluster = vol.root_cluster;
-    let mut last_name = "";
     let mut components = path.split('/').peekable();
-
     while let Some(component) = components.next() {
-        if component.is_empty() {
+        if component.is_empty() || component == "." {
             continue;
         }
 
-        if components.peek().is_some() {
-            // Still traversing directories
-            let name_bytes = component.as_bytes();
-            if let Some((dir_cluster, idx)) =
-                vol.find_entry_in_dir(current_cluster, name_bytes)?
-            {
-                // Read the entry's start_cluster — this is the directory's data cluster
-                let entry = vol.read_entry_data(dir_cluster, idx)?;
-                let start_cluster = u32::from_le_bytes([
-                    entry[0x1A], entry[0x1B],
-                    entry[0x14], entry[0x15],
-                ]);
-                current_cluster = start_cluster;
-            } else {
-                return Err(FError::NoPath);
+        let is_last = components.peek().is_none();
+        if component == ".." {
+            current_cluster = parent_cluster(vol, current_cluster)?;
+            if is_last {
+                return Ok((current_cluster, ""));
             }
-        } else {
-            last_name = component;
+            continue;
         }
+
+        if is_last {
+            return Ok((current_cluster, component));
+        }
+
+        let (dir_cluster, entry_idx) = vol
+            .find_entry_in_dir(current_cluster, component.as_bytes())?
+            .ok_or(FError::NoPath)?;
+        let next = directory_cluster_from_entry(vol, dir_cluster, entry_idx)?;
+        if next < 2 {
+            return Err(FError::NoPath);
+        }
+        current_cluster = next;
     }
 
-    Ok((current_cluster, last_name))
+    Ok((current_cluster, ""))
 }
 
 // ── Test suite ───────────────────────────────────────────────
@@ -1723,6 +1810,7 @@ pub fn fat32_test() {
     let _ = f_unlink("/testdir/hello.txt");
     let _ = f_unlink("/testdir");
     let _ = f_unlink("/README.TXT");
+    let _ = f_chdir("/");
     crate::hal::serial::log("FS", "PREP", "cleanup of previous-run test artifacts done");
 
     // Direct ATA sector test — verify r/w on a known-good LBA (cluster 2, root dir)
@@ -1902,6 +1990,69 @@ pub fn fat32_test() {
         f_mkdir("/testdir/subdir")
     });
 
+    test_run(b"f_chdir relative + f_getcwd\0", || {
+        f_chdir("/testdir")?;
+        f_chdir("subdir")?;
+        let mut buf = [0u8; 64];
+        f_getcwd(&mut buf)?;
+        let len = buf.iter().position(|&b| b == 0).unwrap_or(0);
+        let path = core::str::from_utf8(&buf[..len]).unwrap_or("");
+        if path != "/testdir/subdir" {
+            return Err(FError::Invalid);
+        }
+        f_chdir("..")?;
+        f_chdir("..")?;
+        f_getcwd(&mut buf)?;
+        let len = buf.iter().position(|&b| b == 0).unwrap_or(0);
+        if &buf[..len] != b"/" {
+            return Err(FError::Invalid);
+        }
+        Ok(())
+    });
+
+    test_run(b"f_stat . and ..\0", || {
+        f_chdir("/testdir")?;
+        let dot = f_stat(".")?;
+        let parent = f_stat("..")?;
+        let root = f_stat("/")?;
+        if dot.attributes & ATTR_DIRECTORY == 0 {
+            return Err(FError::Invalid);
+        }
+        if parent.start_cluster != root.start_cluster {
+            return Err(FError::Invalid);
+        }
+        f_chdir("..")?;
+        Ok(())
+    });
+
+    test_run(b"f_opendir named directory\0", || {
+        let info = f_stat("/testdir")?;
+        let dir = f_opendir("/testdir")?;
+        if dir.start_cluster != info.start_cluster {
+            return Err(FError::Invalid);
+        }
+        f_closedir(dir)?;
+        Ok(())
+    });
+
+    test_run(b"f_chdir rejects file\0", || {
+        if f_chdir("/KERNEL.BIN").is_ok() {
+            return Err(FError::Invalid);
+        }
+        Ok(())
+    });
+
+    test_run(b"f_mkdir relative + f_unlink\0", || {
+        f_chdir("/testdir")?;
+        f_mkdir("relative")?;
+        if f_stat("relative").is_err() {
+            return Err(FError::NoFile);
+        }
+        f_unlink("relative")?;
+        f_chdir("/")?;
+        Ok(())
+    });
+
     test_run(b"f_rename\0", || {
         // Use existing files on the image to test rename
         f_rename("/qasm/readme.txt", "/qasm/test.txt")?;
@@ -1943,16 +2094,6 @@ pub fn fat32_test() {
         if label[0] != 0 {
             f_setlabel(&label[..label.iter().position(|&b| b==0).unwrap_or(11)])?;
         }
-        Ok(())
-    });
-
-    test_run(b"f_chdir + f_getcwd\0", || {
-        f_chdir("/testdir")?;
-        let mut buf = [0u8; 64];
-        f_getcwd(&mut buf)?;
-        let len = buf.iter().position(|&b| b == 0).unwrap_or(0);
-        if len == 0 { return Err(FError::Invalid); }
-        f_chdir("/")?;
         Ok(())
     });
 

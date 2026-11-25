@@ -7,8 +7,6 @@ use alloc::vec::Vec;
 
 use crate::hal::input::Ps2Keyboard;
 use crate::hal::fat32;
-use crate::hal::fat32::FileInfo;
-use crate::hal::fat32::Dir;
 use crate::hal::Display;
 
 struct LsFlags {
@@ -54,7 +52,7 @@ fn parse_ls_args<'a>(args: &[&'a str]) -> Result<(Vec<&'a str>, LsFlags), &'stat
     }
 
     if paths.is_empty() {
-        paths.push("/");
+        paths.push(".");
     }
 
     Ok((paths, flags))
@@ -77,7 +75,7 @@ pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, args: &[&str]) {
         }
 
         match fat32::f_opendir(path) {
-            Ok(dir) => list_dir(display, dir, &flags),
+            Ok(dir) => list_dir(display, dir, &flags, path),
             Err(_) => {
                 display.write("ls: cannot access '");
                 display.write(path);
@@ -91,10 +89,12 @@ pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, args: &[&str]) {
     }
 }
 
-fn list_dir(display: &mut dyn Display, mut dir: fat32::Dir, flags: &LsFlags) {
+fn list_dir(display: &mut dyn Display, mut dir: fat32::Dir, flags: &LsFlags, path: &str) {
     let mut entries: [LsEntry; MAX_ENTRIES] = unsafe { core::mem::zeroed() };
     let mut count = 0usize;
     let mut name = [0u8; 13];
+    let base = path.trim_end_matches('/');
+    let base = if base.is_empty() { "/" } else { base };
 
     loop {
         match fat32::f_readdir(&mut dir, &mut name) {
@@ -114,15 +114,21 @@ fn list_dir(display: &mut dyn Display, mut dir: fat32::Dir, flags: &LsFlags) {
                 let mut entry_name = [0u8; 13];
                 entry_name[..end].copy_from_slice(&name[..end]);
 
-                // Get file info via f_stat on the full path
+                // Get file info through the listed directory.
                 let mut full_path = [0u8; 256];
-                full_path[0] = b'/';
-                let path_end = 1;
-                for j in 0..end {
-                    if path_end + j < 256 {
-                        full_path[path_end + j] = entry_name[j];
+                let mut path_end = base.len();
+                full_path[..path_end].copy_from_slice(base.as_bytes());
+                if path_end > 0 && full_path[path_end - 1] != b'/' {
+                    if path_end >= full_path.len() {
+                        continue;
                     }
+                    full_path[path_end] = b'/';
+                    path_end += 1;
                 }
+                if path_end + end >= full_path.len() {
+                    continue;
+                }
+                full_path[path_end..path_end + end].copy_from_slice(&name[..end]);
                 let path_str = core::str::from_utf8(&full_path[..path_end + end]).unwrap_or("?");
                 let info = fat32::f_stat(path_str).ok();
                 let (size, is_dir) = match info {

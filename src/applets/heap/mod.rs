@@ -22,7 +22,7 @@ pub fn run(display: &mut dyn Display, _input: &mut Ps2Keyboard, _args: &[&str]) 
     let used = total - free;
     let pct = if total > 0 { used * 100 / total } else { 0 };
 
-    display.writeln("planckOS v0.1 - Heap Allocator");
+    display.writeln("planckOS v0.2 - Heap Allocator");
     write_row(display, "Total heap:     ", &hex_str(total));
     write_row(display, "Free:           ", &hex_str(free));
     write_row(display, "Used:           ", &hex_str(used));
